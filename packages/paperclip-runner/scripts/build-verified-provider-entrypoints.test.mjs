@@ -38,6 +38,3 @@ test("written provider entrypoints satisfy qualified launch permissions", async 
     }
   }
 });
-
-// Package-layout regression runs in the existing verified-entrypoint test lane.
-import "./provision-pi-package.test.mjs";

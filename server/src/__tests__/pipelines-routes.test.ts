@@ -598,7 +598,7 @@ describeEmbeddedPostgres("pipeline routes", () => {
     });
   });
 
-  it("keeps automation project organization independent of the selected workspace source", async () => {
+  it("fails automation execution when the selected project workspace belongs to a different project", async () => {
     const company = await seedCompany();
     const http = request(app(boardActor));
     const agent = await seedAutomationAgent(company.id);
@@ -621,7 +621,7 @@ describeEmbeddedPostgres("pipeline routes", () => {
         config: {
           automation: {
             assigneeAgentId: agent.id,
-            instructionsBody: "Work in the selected source while retaining the task's project.",
+            instructionsBody: "This should fail before issue creation.",
             projectId: source.projectId,
             projectWorkspaceId: mismatched.projectWorkspaceId,
           },
@@ -638,21 +638,14 @@ describeEmbeddedPostgres("pipeline routes", () => {
       .send({ toStageKey: "in_progress", expectedVersion: 1 })
       .expect(200);
 
-    expect(moved.body.automationExecution.status).toBe("succeeded");
+    expect(moved.body.automationExecution.status).toBe("failed");
     const executionId = moved.body.automationExecution.execution.id as string;
     const [execution] = await db
       .select()
       .from(pipelineAutomationExecutions)
       .where(eq(pipelineAutomationExecutions.id, executionId));
-    expect(execution!.executionIssueId).not.toBeNull();
-    expect(execution!.error).toBeNull();
-    const [issue] = await db.select().from(issues)
-      .where(eq(issues.id, execution!.executionIssueId!));
-    expect(issue).toMatchObject({
-      companyId: company.id,
-      projectId: source.projectId,
-      projectWorkspaceId: mismatched.projectWorkspaceId,
-    });
+    expect(execution!.executionIssueId).toBeNull();
+    expect(execution!.error).toContain("Project workspace must belong to the selected project");
   });
 
   it("keeps legacy stage automation with only assignee and instructions compatible", async () => {

@@ -76,13 +76,10 @@ export function BlockedInboxView({
     error,
     refetch,
   } = useQuery({
-    queryKey: [...queryKeys.issues.listBlockedAttention(companyId), "live-descendant-summary", issueFilters.showAgentCreatedTasks],
+    queryKey: [...queryKeys.issues.listBlockedAttention(companyId), "live-descendant-summary"],
     queryFn: () =>
       issuesApi.list(companyId, {
         attention: "blocked",
-        includeRoutineExecutions: true,
-        includeAgentCreatedTasks: issueFilters.showAgentCreatedTasks,
-        includeParticipatedTasks: true,
         includeBlockedInboxAttention: true,
         includeBlockedBy: true,
         includeLiveDescendantSummary: true,
@@ -101,7 +98,7 @@ export function BlockedInboxView({
         filteredRows.map((row) => row.issue),
         issueFilters,
         currentUserId,
-        false,
+        true,
         liveIssueIds,
         workspaceFilterContext,
       ).map((issue) => issue.id),

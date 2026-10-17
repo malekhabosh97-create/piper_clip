@@ -119,9 +119,6 @@ export async function githubBotCredentials(
     "privateKey",
     "installationId",
     "webhookSecret",
-    "clientId",
-    "clientSecret",
-    "identityCodeVerifier",
   ]) {
     const ref = row.connection.credentialSecretRefs.find(
       (r) => r.configPath === `credentials.${key}`,

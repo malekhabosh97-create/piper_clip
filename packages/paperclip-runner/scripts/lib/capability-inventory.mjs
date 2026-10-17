@@ -82,7 +82,8 @@ export function encodeInventory(value) {
 }
 
 export function decodeInventory(source) {
-  const json = source.startsWith(sourceHeader) ? source.slice(sourceHeader.length) : source;
+  const normalized = source.replace(/\r\n/g, "\n");
+  const json = normalized.startsWith(sourceHeader) ? normalized.slice(sourceHeader.length) : normalized;
   return JSON.parse(json);
 }
 
@@ -247,7 +248,7 @@ export async function buildMcpInventory(repoRoot) {
 
 export function validateInventories(inventories) {
   const errors = [];
-  const expectedCounts = { capabilities: 164, evaluations: 106, legacyMcpAliases: 42 };
+  const expectedCounts = { capabilities: 162, evaluations: 106, legacyMcpAliases: 42 };
   const normativeNames = ["capabilities", "evaluations"];
   const normativeRows = new Map();
   const globalNormativeIds = new Set();

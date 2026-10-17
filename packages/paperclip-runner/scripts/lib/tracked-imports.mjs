@@ -4,13 +4,13 @@ import { readFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { defaultPackageRoot, findSpecifiersInFiles } from "./forbidden-imports.mjs";
+import { defaultPackageRoot, findSpecifiers } from "./forbidden-imports.mjs";
 
 export { defaultPackageRoot };
 
 const execFileAsync = promisify(execFile);
 
-const SCANNED_EXTENSIONS = new Set([".cjs", ".js", ".jsx", ".mjs", ".mts", ".cts", ".ts", ".tsx"]);
+const SCANNED_EXTENSIONS = new Set([".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 // TypeScript resolves an ESM ".js" specifier against its ".ts" source sibling,
 // so a tracked import may legitimately name a file that never exists on disk.
 const JS_TO_SOURCE_EXTENSIONS = new Map([
@@ -129,10 +129,9 @@ export async function checkTrackedImports({
     .sort();
 
   const suspects = [];
-  const sources = await Promise.all(files.map(async (file) => ({ file, source: await readFile(file, "utf8") })));
-  const specifiers = findSpecifiersInFiles(sources);
-  for (const { file, source } of sources) {
-    for (const { specifier, offset } of specifiers.get(file)) {
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    for (const { specifier, offset } of findSpecifiers(source)) {
       if (!isRelative(specifier) || /[?*]|\$\{/.test(specifier)) {
         continue;
       }

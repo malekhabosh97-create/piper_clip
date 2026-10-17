@@ -1,6 +1,6 @@
 export interface PaperclipChatFilePreparationDelivery {
   readonly provider:
-    "slack" | "github" | "discord" | "microsoft-teams" | "telegram" | "imessage-photon" | "speko" | null;
+    "slack" | "github" | "discord" | "microsoft-teams" | "telegram" | "imessage-photon" | null;
   readonly mode: "provider_attachment" | "paperclip_task_only" | "unknown";
   readonly preparationState: "prepared";
   readonly providerDeliveryConfirmed: false;
@@ -17,15 +17,14 @@ export function paperclipChatFilePreparationDelivery(
   };
   if (
     authenticatedProvider === "github" ||
-    authenticatedProvider === "microsoft-teams" ||
-    authenticatedProvider === "speko"
+    authenticatedProvider === "microsoft-teams"
   ) {
     const providerName =
-      authenticatedProvider === "github" ? "GitHub App" : authenticatedProvider === "speko" ? "Speko voice" : "Microsoft Teams";
+      authenticatedProvider === "github" ? "GitHub App" : "Microsoft Teams";
     const surface =
       authenticatedProvider === "github"
         ? "comments or review threads"
-        : authenticatedProvider === "speko" ? "voice conversations" : "chats";
+        : "chats";
     return {
       ...common,
       provider: authenticatedProvider,

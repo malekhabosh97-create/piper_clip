@@ -1,8 +1,8 @@
 import type { CostByUserReport } from "@paperclipai/shared";
-import { CostAmount } from "./CostAmount";
+import { CostEstimateLabel } from "./CostEstimateLabel";
 import { Identity } from "./Identity";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { formatTokens } from "../lib/utils";
+import { formatCents, formatTokens } from "../lib/utils";
 
 export function CostByUserTable({ report }: { report: CostByUserReport }) {
   return (
@@ -38,7 +38,8 @@ export function CostByUserTable({ report }: { report: CostByUserReport }) {
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{formatTokens(row.outputTokens)}</td>
                   <td className="py-3 pl-4 text-right tabular-nums">
-                    <CostAmount costCents={row.costCents} eventCount={row.eventCount} estimatedEventCount={row.estimatedEventCount} unpricedEventCount={row.unpricedEventCount} />
+                    <div>{row.costCents === 0 && row.eventCount > 0 && row.unpricedEventCount === row.eventCount ? "—" : formatCents(row.costCents)}</div>
+                    <CostEstimateLabel eventCount={row.eventCount} estimatedEventCount={row.estimatedEventCount} />
                     {row.unpricedEventCount > 0 && <div className="whitespace-nowrap text-xs text-muted-foreground">{row.unpricedEventCount} unpriced {row.unpricedEventCount === 1 ? "charge" : "charges"}</div>}
                   </td>
                 </tr>

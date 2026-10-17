@@ -57,7 +57,6 @@ export interface OpenHarnessSessionInput {
 }
 
 export interface HarnessSessionRecoveryOptions {
-  normalizeReplayPayload?(payload: PrpEvent["payload"]): PrpEvent["payload"];
   /** Abort provider recovery and release any not-yet-returned provider state. */
   signal: AbortSignal;
 }
@@ -457,7 +456,6 @@ export interface AcpxSessionIdentity {
   permissionMode?: "approve-all" | "approve-paperclip" | "approve-reads" | "deny-all";
   /** Effective provider mode identifier, bound to the session identity. */
   mode?: string;
-  piThinkingLevel?: "off" | "low" | "high" | "max";
   providerLifetimeFenceCandidates: readonly [number, number, number];
 }
 
@@ -499,7 +497,6 @@ export interface HarnessSessionRecoveryResult {
 }
 
 export interface HarnessSession {
-  supportsTurnReasoning?(): boolean;
   turnControlCapabilities?(): NativeTurnControlCapabilities | null;
   ids(): {
     driverSessionId: string;
@@ -513,8 +510,6 @@ export interface HarnessSession {
     /** Set by orchestration only after successful provider-session recovery. */
     continuation?: true;
     requestedCollaborationMode?: "default" | "plan";
-    /** OpenCode/OpenRouter only. Applies to this turn, never subsequent turns. */
-    reasoningMode?: "default" | "disabled";
   }): Promise<{
     turnId: string;
     effectiveCollaborationMode?: "default" | "plan";

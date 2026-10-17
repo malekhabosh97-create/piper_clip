@@ -37,7 +37,7 @@ import { StatusIcon } from "./StatusIcon";
 import { WorkspaceFileLink } from "./WorkspaceFileLink";
 import { ExternalObjectStatusIcon } from "./ExternalObjectStatusIcon";
 import {
-  externalObjectDisplayStatusLabel,
+  externalObjectCategoryLabel,
   externalObjectLivenessLabel,
   externalObjectProviderLabel,
 } from "../lib/external-objects";
@@ -119,8 +119,6 @@ interface MarkdownBodyProps {
   externalReferences?: MarkdownExternalReferenceMap;
   /** Optional resolver for relative image paths (e.g. within export packages) */
   resolveImageSrc?: (src: string) => string | null;
-  /** Resolve file links to app routes; null leaves the label without a link. */
-  resolveLinkHref?: (href: string) => string | null;
   /** Called when a user clicks an inline image */
   onImageClick?: (src: string) => void;
   /** Keep untrusted decision media inert: image references and diagram source only. */
@@ -242,10 +240,9 @@ function MarkdownExternalLink({
 }) {
   const provider = externalObjectProviderLabel(reference.providerKey);
   const displayKey = reference.displayKey?.trim() || provider;
-  const statusLabel = externalObjectDisplayStatusLabel(reference);
+  const statusLabel = reference.statusLabel ?? externalObjectCategoryLabel(reference.statusCategory);
   const livenessLabel = externalObjectLivenessLabel(reference.liveness);
   const livenessSuffix = reference.liveness === "fresh" || reference.liveness === "unknown"
-    || livenessLabel.toLowerCase() === statusLabel.toLowerCase()
     ? ""
     : ` (${livenessLabel})`;
   const titleParts = [
@@ -789,7 +786,6 @@ function MarkdownBodyImpl({
   resolveWikiLinkHref,
   externalReferences,
   resolveImageSrc,
-  resolveLinkHref,
   onImageClick,
   mediaMode = "render",
   resolveWorkspaceFileRef,
@@ -971,14 +967,6 @@ function MarkdownBodyImpl({
         );
       }
 
-      const resolvedHref = href && resolveLinkHref ? resolveLinkHref(href) : href;
-      if (resolveLinkHref && resolvedHref !== href) {
-        return resolvedHref ? (
-          <Link to={resolvedHref} style={mergeWrapStyle(linkStyle as React.CSSProperties | undefined)}>
-            {linkChildren}
-          </Link>
-        ) : <>{linkChildren}</>;
-      }
       const isGitHubLink = isGitHubUrl(href);
       const isExternal = isExternalHttpUrl(href);
       const leadingIcon = isGitHubLink ? (
@@ -1022,7 +1010,7 @@ function MarkdownBodyImpl({
       };
     }
     return map;
-  }, [theme, linkIssueReferences, linkCaseReferences, externalReferenceLookup, resolveImageSrc, resolveLinkHref, onImageClick, mediaMode]);
+  }, [theme, linkIssueReferences, linkCaseReferences, externalReferenceLookup, resolveImageSrc, onImageClick, mediaMode]);
 
   return (
     <div

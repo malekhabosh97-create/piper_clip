@@ -194,11 +194,10 @@ function monitorFromIssue(issue: IssueLivenessIssueInput) {
   return { policyMonitor, stateMonitor };
 }
 
-/** A saved, unconsumed check remains dispatchable when its due time passes. */
-export function hasUnconsumedIssueMonitorPath(issue: IssueLivenessIssueInput, now: Date | string | number) {
+export function hasScheduledIssueMonitorPath(issue: IssueLivenessIssueInput, now: Date | string | number) {
   const nowMs = typeof now === "number" ? now : readDateMs(now) ?? Date.now();
   const nextCheckAtMs = readDateMs(issue.monitorNextCheckAt);
-  if (nextCheckAtMs === null) return false;
+  if (nextCheckAtMs === null || nextCheckAtMs <= nowMs) return false;
 
   const { policyMonitor, stateMonitor } = monitorFromIssue(issue);
   const timeoutAtMs = readDateMs(policyMonitor?.timeoutAt ?? stateMonitor?.timeoutAt);
@@ -210,12 +209,6 @@ export function hasUnconsumedIssueMonitorPath(issue: IssueLivenessIssueInput, no
   if (maxAttempts !== null && attemptCount >= maxAttempts) return false;
 
   return true;
-}
-
-export function hasScheduledIssueMonitorPath(issue: IssueLivenessIssueInput, now: Date | string | number) {
-  const nowMs = typeof now === "number" ? now : readDateMs(now) ?? Date.now();
-  const nextCheckAtMs = readDateMs(issue.monitorNextCheckAt);
-  return nextCheckAtMs !== null && nextCheckAtMs > nowMs && hasUnconsumedIssueMonitorPath(issue, nowMs);
 }
 
 export function classifyIssueReviewPaths(

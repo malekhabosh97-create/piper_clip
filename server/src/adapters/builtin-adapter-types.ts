@@ -18,4 +18,6 @@ export const BUILTIN_ADAPTER_TYPES = new Set([
   "pi_local",
   "process",
   "http",
+  "freellm_browser",
+  "freellm-browser",
 ]);

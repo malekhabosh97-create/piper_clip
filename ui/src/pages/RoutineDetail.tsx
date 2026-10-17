@@ -21,7 +21,6 @@ import { useToastActions } from "../context/ToastContext";
 import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { queryKeys } from "../lib/queryKeys";
 import { copyTextToClipboard } from "../lib/clipboard";
-import { routineOverviewCopyText } from "../lib/routine-description-copy";
 import { buildMarkdownMentionOptions } from "../lib/company-members";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { EmptyState } from "../components/EmptyState";
@@ -38,7 +37,6 @@ import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RoutineOverview } from "../components/RoutineOverview";
-import { RoutineSectionHeading } from "../components/RoutineSectionHeading";
 import { RoutineSectionPicker, RoutineSubSidebar } from "../components/RoutineSubSidebar";
 import {
   isRoutineDetailView,
@@ -901,16 +899,9 @@ export function RoutineDetail() {
                   : "w-full"
             }
           >
-            <RoutineSectionHeading
-              title={SECTION_TITLES[section]}
-              copyText={section === "overview"
-                ? routineOverviewCopyText({
-                    editing: overviewEditing,
-                    draft: editDraft.description,
-                    saved: routine.description,
-                  })
-                : null}
-            />
+            <h2 id="routine-section-title" className="mb-4 text-lg font-semibold">
+              {SECTION_TITLES[section]}
+            </h2>
 
             {section === "overview" && (overviewEditing ? <OverviewSection /> : <RoutineOverview />)}
             {section === "triggers" && <TriggersSection />}

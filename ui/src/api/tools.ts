@@ -87,8 +87,6 @@ export type ToolPoliciesResponse = { policies: ToolPolicy[] };
 export type ToolProfilesResponse = { profiles: ToolProfileWithDetails[] };
 export type ToolGalleryResponse = {
   apps: AppDefinition[];
-  /** Server-authoritative OAuth callback URI, omitted when this deployment has no supported browser origin. */
-  oauthCallbackUrl?: string;
   capabilities: ToolConnectionCreateCapabilities;
   credentialSources: {
     vercelConnect: {
@@ -106,7 +104,7 @@ export type CloudConnectorEnrollmentStatus = {
   status: "not_configured" | "unenrolled" | "pending" | "active" | "suspended" | "unverified";
   brokerBaseUrl: string;
   instanceId: string | null;
-  environment: "development" | "test" | "staging" | "production";
+  environment: "development" | "staging" | "production";
   origins: string[];
   verificationUrl?: string;
   expiresAt?: string;

@@ -6,7 +6,6 @@ import {
   resolvePaperclipRunnerIdleTimeoutMs,
   resolvePaperclipRunnerPermissionMode,
   resolvePaperclipRunnerCursorMode,
-  resolvePaperclipRunnerPiThinkingLevel,
   PAPERCLIP_RUNNER_ACPX_PROFILES,
   type CreateConfigValues,
 } from "@paperclipai/adapter-utils";
@@ -76,7 +75,6 @@ export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unk
 export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string, unknown> {
   const config = buildCodexLocalConfig(v);
   const schemaValues = normalizeLegacyRunnerProvider({ ...(v.adapterSchemaValues ?? {}) });
-  const codexReasoningEffort = config.modelReasoningEffort ?? schemaValues.modelReasoningEffort ?? schemaValues.reasoningEffort;
   for (const unsupportedKey of [
     "engine",
     "agentCommand",
@@ -109,7 +107,6 @@ export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string
   }
   const acpxAgent = selectedAcpxProfile?.value ?? "claude";
   const cursorMode = resolvePaperclipRunnerCursorMode(provider, acpxAgent, schemaValues.acpxSessionMode);
-  const piThinkingLevel = resolvePaperclipRunnerPiThinkingLevel(provider, acpxAgent, schemaValues.piThinkingLevel);
 
   const schemaModel = typeof schemaValues.model === "string"
     ? schemaValues.model.trim()
@@ -117,7 +114,7 @@ export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string
   const configuredModel = typeof config.model === "string"
     ? config.model.trim()
     : "";
-  if (provider === "acpx" && ["cursor", "pi", "copilot"].includes(acpxAgent) && !configuredModel && !schemaModel) {
+  if (provider === "acpx" && acpxAgent === "cursor" && !configuredModel && !schemaModel) {
     throw new Error(`${acpxAgent} requires an explicit provider model`);
   }
   const managedProfileId = typeof schemaValues.managedProfileId === "string"
@@ -195,7 +192,6 @@ export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string
     "opencodePermissionMode",
     "acpxPermissionMode",
     "acpxSessionMode",
-    "piThinkingLevel",
     "managedProfileId",
     "managedAgentsRetentionAcknowledged",
     "maxSessionListCostUsd",
@@ -233,8 +229,7 @@ export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string
     ...schemaValues,
     provider,
     ...(provider === "codex"
-      ? { model: resolvePaperclipRunnerModel("codex", config.model),
-          ...(codexReasoningEffort !== undefined ? { modelReasoningEffort: codexReasoningEffort } : {}) }
+      ? { model: resolvePaperclipRunnerModel("codex", config.model) }
       : {}),
     codexPermissionMode: "never",
     opencodePermissionMode: resolvePaperclipRunnerPermissionMode(
@@ -256,7 +251,6 @@ export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string
       ? {
           acpxAgent,
           ...(cursorMode === undefined ? {} : { acpxSessionMode: cursorMode }),
-          ...(piThinkingLevel === undefined ? {} : { piThinkingLevel }),
           model: configuredModel || schemaModel || (acpxAgent === "grok" ? "grok-4.7" : resolvePaperclipRunnerModel("acpx", undefined)),
         }
       : {}),

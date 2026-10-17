@@ -149,8 +149,6 @@ export interface Project {
 export interface ProjectRepository {
   id: string;
   fullName: string;
-  /** Provider-confirmed ownership; absent on older repository observations. */
-  ownerType?: "personal" | "organization";
   url: string;
   private?: boolean;
   connections: string[];

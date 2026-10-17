@@ -55,10 +55,7 @@ export function admitResult(
   ): SemanticResultAdmission {
     const fingerprint = canonicalJson(result);
     if (state.resultFingerprint !== null) {
-      const same = state.normalizeReplayPayload
-        ? replayFingerprint(state, JSON.parse(state.resultFingerprint)) === replayFingerprint(state, result)
-        : state.resultFingerprint === fingerprint;
-      return same ? "identical" : "conflict";
+      return state.resultFingerprint === fingerprint ? "identical" : "conflict";
     }
     state.result = structuredClone(result);
     state.resultFingerprint = fingerprint;
@@ -181,11 +178,6 @@ export function mapTerminalTurn(
     }
   }
 
-function replayFingerprint(state: CodexSessionState, value: unknown): string {
-  const payload = { value };
-  return canonicalJson(state.normalizeReplayPayload?.(payload) ?? payload);
-}
-
 function terminalFingerprint(
   state: CodexSessionState,
     turn: Record<string, unknown>,
@@ -209,9 +201,7 @@ export function terminalReplayConflict(
       candidate !== null &&
       state.resultFingerprint !== null &&
       state.resultTurnId === turnId &&
-      (state.normalizeReplayPayload
-        ? replayFingerprint(state, candidate) !== replayFingerprint(state, JSON.parse(state.resultFingerprint))
-        : canonicalJson(candidate) !== state.resultFingerprint)
+      canonicalJson(candidate) !== state.resultFingerprint
     ) {
       return {
         code: "conflicting_semantic_result",
@@ -221,10 +211,9 @@ export function terminalReplayConflict(
     const semanticResult = state.resultTurnId === turnId
       ? state.result
       : candidate;
-    const actualFingerprint = terminalFingerprint(state, turn, semanticResult);
-    if (state.normalizeReplayPayload
-      ? replayFingerprint(state, JSON.parse(actualFingerprint)) !== replayFingerprint(state, JSON.parse(expectedFingerprint))
-      : actualFingerprint !== expectedFingerprint) {
+    if (
+      terminalFingerprint(state, turn, semanticResult) !== expectedFingerprint
+    ) {
       return {
         code: "conflicting_turn_terminal",
         message: "changed from its committed terminal fingerprint",

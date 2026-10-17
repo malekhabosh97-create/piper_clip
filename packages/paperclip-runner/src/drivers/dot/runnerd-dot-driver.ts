@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { HarnessDriver, HarnessDriverDescriptor, HarnessSession, OpenHarnessSessionInput, PersistedHarnessSession } from "../../contracts/harness-driver.js";
 import type { NativeExecutionInputV6 } from "../../contracts/native-execution.js";
-import type { ExternalProviderPort, ExternalBotProviderKind } from "../../contracts/external-provider.js";
+import type { ExternalProviderPort } from "../../contracts/external-provider.js";
 import type { PrpEvent } from "../../protocol/replay-contract.js";
 import { validatePrpStructuredRunResult } from "../../protocol/replay-contract.js";
 import { DurablePrpControlPlane, spawnRunner, type RunnerProcessHandle } from "../../control-plane/durable-prp-control-plane.js";
@@ -37,22 +37,17 @@ const capabilities = {
   dynamicTools: true, unsupported: ["resume", "steering", "interruption", "usage", "goals", "runtimeRequestResolution", "threadLineage"],
 };
 
-/** Inspect external capabilities without allocating a broker port or Runner. */
-export function describeRunnerdExternalBotDriver(provider: ExternalBotProviderKind): HarnessDriverDescriptor {
-  const grok = provider === "grok_bot";
-  return { kind: grok ? "grok_bot_mcp" : "openai_dot_mcp", displayName: grok ? "Grok Bot" : "OpenAI Dot", version: grok ? "grok-bot-mcp-v1" : "dot-mcp-v1", protocolVersion: "prp.v3",
-    capabilities: { ...structuredClone(capabilities), completionBoundary: "paperclip_work_session", providerTermination: "unavailable", providerTranscriptStreaming: false }, runtimeContextCapabilities: { instructions: "native", skills: "native", mcp: "native" } };
-}
-
+/** The admission path can inspect Dot without allocating a broker port or Runner. */
 export function describeRunnerdDotDriver(): HarnessDriverDescriptor {
-  return describeRunnerdExternalBotDriver("openai_dot");
+  return { kind: "openai_dot_mcp", displayName: "OpenAI Dot", version: "dot-mcp-v1", protocolVersion: "prp.v3",
+    capabilities: structuredClone(capabilities), runtimeContextCapabilities: { instructions: "native", skills: "native", mcp: "native" } };
 }
 
 /** Thin SDK projection. Rust owns every lifecycle decision and durable receipt. */
 export class RunnerdDotDriver implements HarnessDriver {
   constructor(readonly options: RunnerdDotDriverOptions) {}
   async descriptor() {
-    return describeRunnerdExternalBotDriver(this.options.execution.provider.kind);
+    return describeRunnerdDotDriver();
   }
   async openSession(input: OpenHarnessSessionInput): Promise<HarnessSession> {
     if (input.runId !== this.options.identity.runId || input.normalizedSessionId !== this.options.identity.normalizedSessionId) {
@@ -64,18 +59,14 @@ export class RunnerdDotDriver implements HarnessDriver {
     catch (error) { await session.detachControllerForRestart().catch(() => {}); throw error; }
   }
   async recoverSession(snapshot: PersistedHarnessSession, options: { signal: AbortSignal }) {
-    if (snapshot.driverKind !== describeRunnerdExternalBotDriver(this.options.execution.provider.kind).kind || snapshot.runId !== this.options.identity.runId
+    if (snapshot.driverKind !== "openai_dot_mcp" || snapshot.runId !== this.options.identity.runId
         || snapshot.driverSessionId !== this.options.identity.normalizedSessionId || snapshot.providerSessionId != null) {
       return { recovered: false, reason: "Dot bridge checkpoint identity mismatch" };
     }
     let saved: Record<string, unknown> | null;
     try { saved = await readProviderCheckpoint(this.options); }
     catch { return { recovered: false, reason: "Dot bridge checkpoint invalid; external work requires reconciliation" }; }
-    if (!saved) return { recovered: false, reason: "External bridge checkpoint missing; external work requires reconciliation" };
-    const descriptor = saved.descriptor as Record<string, unknown> | undefined;
-    if (this.options.execution.provider.kind === "grok_bot" && descriptor?.kind !== "grok_bot") {
-      return { recovered: false, reason: "External bridge checkpoint provider mismatch" };
-    }
+    if (!saved) return { recovered: false, reason: "Dot bridge checkpoint missing; external work requires reconciliation" };
     if (saved.schema !== "paperclip.runner.dot-provider-state.v1" || saved.runId !== snapshot.runId || saved.sessionId !== snapshot.driverSessionId || saved.turnId !== this.options.identity.turnId) {
       return { recovered: false, reason: "Dot bridge checkpoint authority mismatch" };
     }
@@ -102,7 +93,7 @@ class RunnerdDotSession implements HarnessSession {
   #closed = false;
   #failure: Error | null = null;
   constructor(readonly options: RunnerdDotDriverOptions) {}
-  ids() { return { driverSessionId: this.options.identity.normalizedSessionId, providerSessionId: null, displayId: describeRunnerdExternalBotDriver(this.options.execution.provider.kind).displayName }; }
+  ids() { return { driverSessionId: this.options.identity.normalizedSessionId, providerSessionId: null, displayId: "OpenAI Dot" }; }
 
   async open(signal?: AbortSignal) {
     const o = this.options;
@@ -147,14 +138,12 @@ class RunnerdDotSession implements HarnessSession {
     signal?.throwIfAborted();
     if (!o.adoptExistingRunner) {
       this.#process = spawnRunner({
-        processLauncher: o.runnerProcessLauncher, connectUrl: registration?.connectUrl ?? (registration?.connection ? undefined : core.connectUrl),
+        processLauncher: o.runnerProcessLauncher, connectUrl: registration?.connectUrl ?? core.connectUrl,
         connection: registration?.connection, stateDirectory: runnerState, identity: o.identity,
         ticket: core.issueBootstrapTicket(60_000), runnerBinaryPath: binary,
         runnerVersion: artifact.version, runnerDigest: artifact.digest,
         maxOutboxBytes: 16 * 1024 * 1024, p0ReserveBytes: 1024 * 1024,
-        // A managed controller rollout can outlast a minute. Task authority
-        // remains gated by the current controller lease throughout the gap.
-        maxRuntimeMs: 0, reconnectGraceMs: o.runnerProcessLauncher ? 300_000 : 60_000,
+        maxRuntimeMs: 0, reconnectGraceMs: 60_000,
         // No agent, OAuth, ChatGPT or provider API credentials are inherited.
         environment: { PATH: process.env.PATH },
       });
@@ -165,13 +154,11 @@ class RunnerdDotSession implements HarnessSession {
         if (this.#closed) return;
         // Rust exits after the authenticated shutdown receipt is committed and
         // ACKed. That exit can precede the SDK's next command poll.
-        // Remote monitors do not report an exit code. The authenticated,
-        // persisted receipt is the evidence of shutdown, for either launcher.
-        if (core.getCommand("dot_shutdown")?.status === "completed") return;
+        if (result.code === 0 && core.getCommand("dot_shutdown")?.status === "completed") return;
         this.#failure ??= new Error(`dot_runner_process_exited_recovery_required: code=${result.code} signal=${result.signal}`);
         this.#wake();
       }, () => {
-        if (this.#closed || core.getCommand("dot_shutdown")?.status === "completed") return;
+        if (this.#closed) return;
         this.#failure ??= new Error("dot_runner_process_exited_recovery_required");
         this.#wake();
       });
@@ -182,22 +169,15 @@ class RunnerdDotSession implements HarnessSession {
       if (!this.#closed) { this.#failure = error instanceof Error ? error : new Error("dot_runner_transport_failed"); this.#wake(); }
     });
     const checkpoint = await readProviderCheckpoint(o);
-    if (!checkpoint && this.#events.some(event => event.eventType === "external_provider.dispatch_requested")) {
-      throw new Error("dot_provider_checkpoint_missing_reconciliation_required");
-    }
     if (checkpoint && (checkpoint.schema !== "paperclip.runner.dot-provider-state.v1"
       || checkpoint.runId !== o.identity.runId || checkpoint.sessionId !== o.identity.normalizedSessionId
       || checkpoint.turnId !== o.identity.turnId)) throw new Error("dot_runner_checkpoint_authority_mismatch");
-    if (checkpoint && o.execution.provider.kind === "grok_bot"
-      && (checkpoint.descriptor as Record<string, unknown> | undefined)?.kind !== "grok_bot") {
-      throw new Error("external_provider_checkpoint_provider_mismatch");
-    }
     this.#detachPort = await o.port.attach(async operation => {
       await this.#command("external_provider.operation", { ...operation }, `dot_operation_${operation.requestId}`);
     }, () => this.interrupt(), !!checkpoint);
     await this.#command("run.prepare", {
-      provider: { kind: o.execution.provider.kind, ...o.execution.provider.binding,
-        instructions: `${nativeSystemInstructions(o.execution)}\n\nAccept the assignment before calling tools. Invoke paperclip_finish or paperclip_block, then submit the same structured result with ${o.execution.provider.kind === "grok_bot" ? "paperclip_grok_finish" : "paperclip_dot_finish"}. Keep request IDs stable across retries.` },
+      provider: { kind: "openai_dot", ...o.execution.provider.binding,
+        instructions: `${nativeSystemInstructions(o.execution)}\n\nAccept the assignment before calling tools. Invoke paperclip_finish or paperclip_block, then submit the same structured result with paperclip_dot_finish. Keep request IDs stable across retries.` },
       authorizedTools: authorizedToolSetForProvider(undefined, [...o.dynamicTools ?? [], ...codexSemanticToolSpecs()]),
       completionContract: { revision: o.execution.completionContract.contract.revision,
         criterionIds: o.execution.completionContract.contract.criteria.map(c => c.id) },
@@ -243,15 +223,10 @@ class RunnerdDotSession implements HarnessSession {
   async interrupt() { await this.#command("run.cancel", {}, "dot_cancel"); }
   async snapshot(): Promise<PersistedHarnessSession> {
     const state = await this.read();
-    // Target-owned state is authoritative. Also retain the controller's recovery
-    // evidence through the supplied reader after this authenticated snapshot.
-    if (this.options.readProviderState && !await readProviderCheckpoint(this.options)) {
-      throw new Error("dot_provider_checkpoint_missing_reconciliation_required");
-    }
     const proposed = this.#events.findLast(event => event.eventType === "run.result.proposed");
     const result = proposed ? validatePrpStructuredRunResult(proposed.payload) : null;
     const terminal = this.#events.findLast(event => event.eventType === "run.terminal");
-    return { driverKind: describeRunnerdExternalBotDriver(this.options.execution.provider.kind).kind, driverSessionId: this.ids().driverSessionId,
+    return { driverKind: "openai_dot_mcp", driverSessionId: this.ids().driverSessionId,
       providerSessionId: null, runId: this.options.identity.runId,
       normalizedSessionId: this.options.identity.normalizedSessionId,
       activeTurnId: typeof state.activeProviderTurnId === "string" ? state.activeProviderTurnId : null,

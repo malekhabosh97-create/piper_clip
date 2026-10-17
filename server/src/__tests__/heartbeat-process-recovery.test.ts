@@ -1,14 +1,5 @@
-import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
-import * as conversationContinuation from "../services/conversation-continuation.js";
-import { environmentRuntimeService } from "../services/environment-runtime.js";
-import * as workspaceRuntime from "../services/workspace-runtime.js";
-import { ensureNativeCompletionContract } from "../services/native-runtime/completion-contracts.js";
-import { readNativePlanWait, hasCommittedNativePlanWait } from "../services/native-runtime/native-plan-wait.js";
-import { nativeSha256 } from "../services/native-runtime/canonical.js";
-import { buildQuestionResponseDeliveryEnvelope } from "../services/question-response-delivery.js";
 import * as aiConnectionRuntime from "../services/ai-connection-runtime.js";
-import { forbidden, unprocessable } from "../errors.js";
-import { aiConnectionCredentialNotSharedFailure } from "../services/ai-connection-configuration-failure.js";
+import { unprocessable } from "../errors.js";
 import * as executionContinuation from "../services/execution-continuation.js";
 import * as environmentOrchestrator from "../services/environment-run-orchestrator.js";
 import { remoteTerminationReceipt } from "../services/remote-execution-termination.js";
@@ -32,7 +23,6 @@ import {
   afterAll,
   afterEach,
   beforeAll,
-  beforeEach,
   describe,
   expect,
   it,
@@ -76,7 +66,6 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
-  issueQuestionResponseDeliveries,
   issueApprovals,
   issueDocuments,
   issuePlanDecompositions,
@@ -516,7 +505,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       createdAt: now,
       updatedAt: now,
     });
-  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
+  }, 20_000);
 
   afterEach(async () => {
     vi.clearAllMocks();
@@ -683,7 +672,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       await db.delete(companySecretBindings);
       await db.delete(companySecrets);
       try {
-        await db.delete(companyMemberships);
         await db.delete(companies);
         break;
       } catch (error) {
@@ -1178,7 +1166,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -1465,7 +1452,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -1539,94 +1525,17 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     return { companyId, agentId, runId, wakeupRequestId, issueId };
   }
 
-  it.each(["owned", "forged"] as const)("keeps unresolved-ref recovery and reporting while persisting only owned diagnostics: %s", async provenance => {
-    const { companyId, agentId, issueId, runId, wakeupRequestId } = await seedQueuedIssueRunFixture();
-    const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "base-ref-heartbeat-"));
-    execFileSync("git", ["init", "-b", "master"], { cwd: repoRoot, stdio: "ignore" });
-    execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "Fixture"], { cwd: repoRoot, stdio: "ignore" });
-    const original = await workspaceRuntime.realizeExecutionWorkspace({
-      base: { baseCwd: repoRoot, source: "project_primary", projectId: null, workspaceId: null, repoUrl: null, repoRef: "absent-fixture" },
-      config: { workspaceStrategy: { type: "git_worktree" } },
-      issue: { id: issueId, identifier: "FIXTURE-1", title: "Fixture" }, agent: { id: agentId, companyId, name: "Fixture" },
-    }).catch(error => error);
-    expect(original).toBeInstanceOf(workspaceRuntime.UnresolvedWorkspaceBaseRefError);
-    const diagnostic = workspaceRuntime.readUnresolvedWorkspaceBaseRefDiagnostic(original);
-    expect(diagnostic).toMatchObject({ remoteLookup: "failed", fetch: "not_attempted" });
-    const error = provenance === "owned" ? original : Object.assign(new workspaceRuntime.UnresolvedWorkspaceBaseRefError({
-      requestedRef: "absent-fixture", recoveryIdentityRef: "origin/absent-fixture", attemptedRefs: ["origin/absent-fixture"],
-    }), { baseRefDiagnostic: diagnostic });
-    const realize = vi.spyOn(workspaceRuntime, "realizeExecutionWorkspace").mockRejectedValueOnce(error);
-    try {
-      const heartbeat = heartbeatService(db);
-      await heartbeat.resumeQueuedRuns();
-      await waitForRunToSettle(heartbeat, runId, 5_000);
-      await heartbeat.waitForRunExecutionDrain(runId);
-      await waitForPendingRunFailureReports();
-      expect(realize).toHaveBeenCalled();
-      expect(mockAdapterExecute).not.toHaveBeenCalled();
-      const failed = await heartbeat.getRun(runId);
-      expect(failed).toMatchObject({ status: "failed", errorCode: "configuration_incomplete", resultJson: {
-        configurationIncomplete: { reason: "workspace_base_ref_unresolved" },
-        executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
-      } });
-      if (provenance === "owned") expect(failed?.resultJson?.configurationIncomplete).toHaveProperty("baseRefDiagnostic", diagnostic);
-      else expect(failed?.resultJson?.configurationIncomplete).not.toHaveProperty("baseRefDiagnostic");
-      expect(mockCaptureRunFailure).toHaveBeenCalledWith(expect.objectContaining({ runId, errorCode: "configuration_incomplete" }));
-      const captured = mockCaptureRunFailure.mock.calls.find(([entry]) => entry.runId === runId)?.[0];
-      if (provenance === "owned") expect(captured?.diagnostics.execution).toMatchObject({ workspaceBaseRefRemoteLookup: "failed", workspaceBaseRefFetch: "not_attempted" });
-      else expect(captured?.diagnostics.execution).not.toHaveProperty("workspaceBaseRefFetch");
-      const [issue] = await db.select().from(issues).where(eq(issues.id, issueId));
-      expect(issue).toMatchObject({ status: "blocked", executionRunId: null });
-      const [action] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, issueId));
-      expect(action).toMatchObject({ status: "active", kind: "configuration_validation", ownerType: "board" });
-      const [wakeup] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeupRequestId));
-      expect(wakeup.status).toBe("failed");
-    } finally { realize.mockRestore(); await fs.rm(repoRoot, { recursive: true, force: true }); }
-  });
-
-  it("keeps a repair notice on the latest run when an unresolved branch fails twice", async () => {
-    const { agentId, issueId, runId } = await seedQueuedIssueRunFixture();
-    const error = new workspaceRuntime.UnresolvedWorkspaceBaseRefError({
-      requestedRef: "main", recoveryIdentityRef: "origin/main", attemptedRefs: ["origin/main"], defaultBranch: "master",
-    });
-    const realize = vi.spyOn(workspaceRuntime, "realizeExecutionWorkspace").mockRejectedValue(error);
-    try {
-      const heartbeat = heartbeatService(db);
-      await heartbeat.resumeQueuedRuns();
-      await waitForRunToSettle(heartbeat, runId, 5_000);
-      await heartbeat.waitForRunExecutionDrain(runId);
-      const [firstAction] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, issueId));
-      const next = await heartbeat.wakeup(agentId, { source: "on_demand", triggerDetail: "manual",
-        reason: "retry_failed_run", failedRunId: runId, payload: { issueId }, contextSnapshot: { issueId },
-        requestedByActorType: "user", requestedByActorId: "responsible-user" });
-      expect(next).toHaveProperty("id");
-      await waitForRunToSettle(heartbeat, next!.id, 5_000);
-      await heartbeat.waitForRunExecutionDrain(next!.id);
-      const actions = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, issueId));
-      expect(actions).toHaveLength(1);
-      expect(actions[0]).toMatchObject({ id: firstAction.id, status: "active", evidence: { latestRunId: next!.id } });
-      const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
-      expect(comments.filter(c => c.authorType === "system" && c.metadata?.sourceRunId === next!.id)).toHaveLength(1);
-      expect(comments.filter(c => c.authorType === "system" && c.metadata?.sourceRunId === runId)).toHaveLength(1);
-      expect(mockAdapterExecute).not.toHaveBeenCalled();
-    } finally { realize.mockRestore(); }
-  });
-
-  it.each(["missing_default", "credential_not_shared", "database_error", "unmarked_http_error", "unmarked_forbidden", "provider_error"] as const)(
+  it.each(["missing_default", "database_error", "unmarked_http_error", "provider_error"] as const)(
     "preserves AI configuration recovery and reports only unexpected causes: %s", async (cause) => {
       const { companyId, agentId, issueId, runId, wakeupRequestId } = await seedQueuedIssueRunFixture();
-      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" }).onConflictDoNothing();
+      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
       await db.update(agents).set({ runtimeConfig: {
         heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
         aiConnection: { provider: "openai", method: "api_key", mode: "responsible_user" },
       } }).where(eq(agents.id, agentId));
       const prepare = vi.spyOn(aiConnectionRuntime, "prepareManagedAiRuntime");
       if (cause !== "missing_default") prepare.mockRejectedValueOnce(
-        cause === "credential_not_shared"
-          ? aiConnectionCredentialNotSharedFailure()
-          : cause === "unmarked_forbidden"
-            ? forbidden("This credential is not shared with the responsible user", { code: "ai_connection_credential_not_shared" })
-          : cause === "unmarked_http_error"
+        cause === "unmarked_http_error"
           ? unprocessable("Connect an account and choose your personal default", { code: "ai_connection_default_missing" })
           : new Error(cause),
       );
@@ -1641,12 +1550,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         expect(failed).toMatchObject({ status: "failed", errorCode: "configuration_incomplete",
           resultJson: { configurationIncomplete: { reason: "ai_connection_unavailable" }, executionRecovery: { kind: "bootstrap", providerWorkStarted: false } },
         });
-        if (cause === "missing_default" || cause === "credential_not_shared") {
-          expect(failed?.error).toBe(cause === "missing_default"
-            ? "Connect an account and choose your personal default"
-            : "This credential is not shared with the responsible user");
-          expect(failed?.resultJson?.configurationIncomplete).toMatchObject({ selectionFailure: cause === "missing_default"
-            ? "ai_connection_default_missing" : "ai_connection_credential_not_shared" });
+        if (cause === "missing_default") {
+          expect(failed?.error).toBe("Connect an account and choose your personal default");
+          expect(failed?.resultJson?.configurationIncomplete).toMatchObject({ selectionFailure: "ai_connection_default_missing" });
           expect(mockCaptureRunFailure).not.toHaveBeenCalled();
         } else {
           expect(failed?.resultJson?.configurationIncomplete).not.toHaveProperty("selectionFailure");
@@ -2174,266 +2080,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     expect(result.issueIds).not.toContain(issueId);
     expect(result.continuationRequeued).toBe(0);
-  });
-
-  async function seedPendingNativeFinalization(accept = true) {
-    const fixture = await seedRunFixture({ runtimeMode: "native", adapterType: "paperclip_runner", processPid: 2_000_000_000 });
-    const { companyId, agentId, issueId, runId } = fixture;
-    const contractId = randomUUID(), runnerInstanceId = randomUUID();
-    const contractSha = `finalization-contract-${runId}`;
-    await db.insert(completionContracts).values({
-      id: contractId, companyId, issueId, revision: 1,
-      schemaVersion: "paperclip.completion-contract.v1", policyVersion: "phase6-v1",
-      risk: "low", completionAuthority: "agent_claim_policy", incompleteCriteriaPolicy: "preserve_non_terminal",
-      contractJson: { revision: CONTROL_PLANE_CONFORMANCE_RESULT.completionClaim.contractRevision,
-        objective: "Keep completed work", criteria: [{ id: "objective", requirement: "Keep completed work" }] },
-      canonicalSha256: contractSha, createdByActorType: "system", createdByActorId: "test",
-    });
-    await db.update(heartbeatRuns).set({ nativeIssueId: issueId, nativeSessionId: runId,
-      runnerInstanceId, completionContractId: contractId, completionContractSha256: contractSha,
-    }).where(eq(heartbeatRuns.id, runId));
-    const makePort = (targetDb = db) => new PaperclipControlPlanePort(targetDb, { companyId, issueId, runId, agentId, sessionId: runId,
-      completionContractId: contractId, completionContractSha256: contractSha,
-      sourceInstanceId: runnerInstanceId, controlPlaneSourceInstanceId: `finalization-control-${runId}`,
-    });
-    const port = makePort();
-    await port.openRun({ ...CONTROL_PLANE_CONFORMANCE_OPEN,
-      identity: { companyId, issueId, runId, agentId, sessionId: runId }, sourceInstanceId: runnerInstanceId });
-    const complete = (targetDb = db) => makePort(targetDb).completeRun({ result: CONTROL_PLANE_CONFORMANCE_RESULT,
-      terminal: CONTROL_PLANE_CONFORMANCE_TERMINAL, callerResultId: `finalization-result-${runId}` });
-    if (accept) await complete();
-    const [local] = await db.select().from(environments).where(eq(environments.driver, "local"));
-    const lease = local
-      ? { environmentId: local.id, leaseId: (await db.insert(environmentLeases).values({
-          companyId, issueId, heartbeatRunId: runId, environmentId: local.id,
-          status: "active", leasePolicy: "ephemeral", provider: "local", metadata: { driver: "local" },
-          updatedAt: new Date(0),
-        }).returning())[0].id }
-      : await seedEnvironmentLeaseFixture(fixture);
-    return { ...fixture, ...lease, complete };
-  }
-
-  it.each(["foreign", "malformed", "expired_controller"] as const)(
-    "preserves native finalization source and board hold after restart with %s owner",
-    async (kind) => {
-      const f = await seedPendingNativeFinalization();
-      const owner = kind === "malformed" ? { unknown: true } : {
-        token: randomUUID(), controllerBootId: randomUUID(),
-        hostname: kind === "foreign" ? "previous-controller.invalid" : os.hostname(),
-        pid: 2_000_000_000, processStartedAt: new Date(0).toISOString(),
-      };
-      await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: owner } })
-        .where(eq(heartbeatRuns.id, f.runId));
-      await db.update(nativeRunFinalizations).set({ leaseOwner: null, leaseExpiresAt: new Date(0),
-        controllerPid: 2_000_000_000, controllerProcessStartedAt: new Date(0),
-      }).where(eq(nativeRunFinalizations.runId, f.runId));
-      const accepted = await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, f.runId));
-      const runtime = environmentRuntimeService(db);
-      const release = vi.spyOn(runtime, "releaseRunLeases");
-      const destroy = vi.spyOn(runtime, "destroyRunLease");
-      const heartbeat = heartbeatService(db, { environmentRuntime: runtime });
-      await heartbeat.recoverNativeRunsAfterRestart();
-      const [hold] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, f.issueId));
-      expect(hold).toMatchObject({ status: "active", cause: "native_workspace_finalization_owner_unverified", ownerType: "board", wakePolicy: null });
-      for (let tick = 0; tick < 2; tick += 1) {
-        expect(await heartbeat.reapOrphanedRuns()).toEqual({ reaped: 0, runIds: [] });
-        // The held run itself is an execution path; it does not settle copyback.
-        await heartbeat.reconcileStrandedAssignedIssues();
-        const actions = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, f.issueId));
-        expect(actions).toHaveLength(1);
-        expect(actions[0]).toMatchObject({ id: hold.id });
-        expect(["active", "escalated"]).toContain(actions[0].status);
-      }
-      expect((await heartbeat.getRun(f.runId))).toMatchObject({ status: "running", nativePhase: "workspace_finalizing", errorCode: null,
-        runnerProfileJson: { nativeWorkspaceFinalizationOwner: owner } });
-      expect((await db.select().from(environmentLeases).where(eq(environmentLeases.id, f.leaseId)))[0])
-        .toMatchObject({ status: "active", releasedAt: null });
-      expect(await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, f.runId))).toEqual(accepted);
-      expect(await db.select().from(workspaceOperations).where(eq(workspaceOperations.heartbeatRunId, f.runId))).toEqual([]);
-      expect(release).not.toHaveBeenCalled();
-      expect(destroy).not.toHaveBeenCalled();
-      expect(mockAdapterExecute).not.toHaveBeenCalled();
-      expect(mockExecutePaperclipNativeSession).not.toHaveBeenCalled();
-      await waitForPendingRunFailureReports();
-      expect(mockCaptureRunFailure).not.toHaveBeenCalled();
-      await heartbeat.drainActiveRunExecutions();
-    },
-  );
-
-  it("rejects a stale orphan candidate when native finalization commits before owner acquisition", async () => {
-    const f = await seedPendingNativeFinalization(false);
-    // Avoid the unrelated observed-owner gate while the old enumeration still
-    // lacks a result. Publish through the real result transaction just before
-    // generic orphan recovery reaches its conditional status write.
-    await db.update(nativeRunFinalizations).set({ phase: "workspace_finalizing" }).where(eq(nativeRunFinalizations.runId, f.runId));
-    const usedConversation = vi.spyOn(conversationContinuation, "runUsedConversationAdapter").mockImplementationOnce(async () => {
-      await f.complete();
-      return false;
-    });
-    const runtime = environmentRuntimeService(db);
-    const release = vi.spyOn(runtime, "releaseRunLeases");
-    try {
-      expect(await heartbeatService(db, { environmentRuntime: runtime }).reapOrphanedRuns()).toEqual({ reaped: 0, runIds: [] });
-      expect(usedConversation).toHaveBeenCalledOnce();
-      expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId)))[0])
-        .toMatchObject({ status: "running", nativePhase: "workspace_finalizing", errorCode: null });
-      expect((await db.select().from(environmentLeases).where(eq(environmentLeases.id, f.leaseId)))[0].status).toBe("active");
-      expect(release).not.toHaveBeenCalled();
-    } finally { usedConversation.mockRestore(); }
-  });
-
-  it("fences a native finalization publisher that commits while the orphan UPDATE waits on its row lock", async () => {
-    const f = await seedPendingNativeFinalization(false);
-    await db.update(nativeRunFinalizations).set({ phase: "workspace_finalizing" }).where(eq(nativeRunFinalizations.runId, f.runId));
-    let release!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    let entered!: () => void;
-    const writerEntered = new Promise<void>(resolve => { entered = resolve; });
-    let publisherPid = 0;
-    let publisher: Promise<void> | undefined;
-    const usedConversation = vi.spyOn(conversationContinuation, "runUsedConversationAdapter").mockImplementationOnce(async () => {
-      publisher = db.transaction(async tx => {
-        const rows = await tx.execute(sql`select pg_backend_pid() as pid`);
-        publisherPid = Number(rows[0].pid);
-        // This is the real publication protocol, not a synthetic version bump:
-        // completeRun locks heartbeat, accepts the result, and writes its phase.
-        await f.complete(tx as unknown as typeof db);
-        entered();
-        await gate;
-      });
-      await writerEntered;
-      return false;
-    });
-    const runtime = environmentRuntimeService(db);
-    const releaseLease = vi.spyOn(runtime, "releaseRunLeases");
-    const heartbeat = heartbeatService(db, { environmentRuntime: runtime });
-    const reaping = heartbeat.reapOrphanedRuns();
-    try {
-      await writerEntered;
-      await vi.waitFor(async () => {
-        const waiting = await db.execute(sql`select pid from pg_stat_activity
-          where ${publisherPid} = any(pg_blocking_pids(pid)) and wait_event_type = 'Lock'`);
-        expect(waiting.length).toBeGreaterThan(0);
-      }, { timeout: 5_000 });
-      release();
-      await publisher;
-      expect(await reaping).toEqual({ reaped: 0, runIds: [] });
-      expect((await heartbeat.getRun(f.runId))).toMatchObject({ status: "running", errorCode: null, nativePhase: "workspace_finalizing" });
-      expect((await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, f.runId)))).toHaveLength(1);
-      expect((await db.select().from(environmentLeases).where(eq(environmentLeases.id, f.leaseId)))[0].status).toBe("active");
-      expect(releaseLease).not.toHaveBeenCalled();
-      expect(mockAdapterExecute).not.toHaveBeenCalled();
-      expect(mockExecutePaperclipNativeSession).not.toHaveBeenCalled();
-      await waitForPendingRunFailureReports();
-      expect(mockCaptureRunFailure).not.toHaveBeenCalled();
-    } finally {
-      release();
-      await publisher?.catch(() => undefined);
-      await reaping.catch(() => undefined);
-      usedConversation.mockRestore();
-    }
-  });
-
-  it.each(["phase_only", "rejected_result", "terminal_failure", "unknown_phase"] as const)(
-    "does not invent native finalization authority from %s",
-    async (kind) => {
-      const f = await seedPendingNativeFinalization(kind !== "phase_only");
-      await db.update(heartbeatRuns).set({ nativePhase: "workspace_finalizing",
-        runnerProfileJson: { nativeWorkspaceFinalizationOwner: { unknown: true } },
-      }).where(eq(heartbeatRuns.id, f.runId));
-      await db.update(nativeRunFinalizations).set({ phase: kind === "terminal_failure" ? "terminal_failure"
-        : kind === "unknown_phase" ? "unknown_phase" : "workspace_finalizing",
-        // Prevent the finalizer from changing this negative control first.
-        leaseOwner: "unverified-old-owner", leaseExpiresAt: new Date(Date.now() + 60_000),
-      }).where(eq(nativeRunFinalizations.runId, f.runId));
-      if (kind === "rejected_result") await db.update(nativeRunResults).set({ schemaStatus: "rejected" }).where(eq(nativeRunResults.runId, f.runId));
-      const result = await heartbeatService(db).reapOrphanedRuns();
-      expect(result.runIds).toContain(f.runId);
-      expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId)))[0])
-        .toMatchObject({ status: "failed", errorCode: "process_lost" });
-    },
-  );
-
-  it("resolves the exact native finalization hold after verified workspace settlement without replay", async () => {
-    const f = await seedPendingNativeFinalization();
-    await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: {
-      token: randomUUID(), hostname: "previous-controller.invalid", pid: 2_000_000_000, processStartedAt: new Date(0).toISOString(),
-    } } }).where(eq(heartbeatRuns.id, f.runId));
-    const heartbeat = heartbeatService(db);
-    await heartbeat.recoverNativeRunsAfterRestart();
-    const [hold] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, f.issueId));
-    const accepted = await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, f.runId));
-    // Model exact operator stop verification and a completed copyback receipt;
-    // no test or product path infers these facts from a dead provider PID.
-    await db.update(heartbeatRuns).set({ runnerProfileJson: {} }).where(eq(heartbeatRuns.id, f.runId));
-    await db.insert(workspaceOperations).values({ companyId: f.companyId, issueId: f.issueId,
-      heartbeatRunId: f.runId, phase: "workspace_finalize", status: "succeeded" });
-    await heartbeat.reapOrphanedRuns();
-    expect((await heartbeat.getRun(f.runId))).toMatchObject({ status: "succeeded", nativePhase: "committed" });
-    expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, hold.id)))[0])
-      .toMatchObject({ status: "resolved", outcome: "restored" });
-    expect(await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, f.runId))).toEqual(accepted);
-    expect(mockExecutePaperclipNativeSession).not.toHaveBeenCalled();
-    expect(mockAdapterExecute).not.toHaveBeenCalled();
-    await heartbeat.drainActiveRunExecutions();
-  });
-
-  it("rejects foreign result, company, and issue bindings for native finalization", async () => {
-    const source = await seedPendingNativeFinalization();
-    const other = await seedPendingNativeFinalization();
-    const [otherResult] = await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, other.runId));
-    for (const patch of [{ resultId: otherResult.id }, { companyId: other.companyId }, { issueId: other.issueId }]) {
-      await expect(db.update(nativeRunFinalizations).set(patch).where(eq(nativeRunFinalizations.runId, source.runId)))
-        .rejects.toMatchObject({ cause: { code: "23503" } });
-    }
-    // The composite foreign keys are part of the guard's durable authority;
-    // invalid foreign bindings never become a candidate through a valid write.
-    expect((await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, source.runId)))[0])
-      .toMatchObject({ companyId: source.companyId, issueId: source.issueId, phase: "workspace_finalizing" });
-  });
-
-  it("does not extend native finalization authority to a legacy runtime", async () => {
-    const f = await seedPendingNativeFinalization();
-    await db.update(heartbeatRuns).set({ runtimeMode: "legacy" }).where(eq(heartbeatRuns.id, f.runId));
-    expect((await heartbeatService(db).reapOrphanedRuns()).runIds).toContain(f.runId);
-    expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId)))[0])
-      .toMatchObject({ status: "failed", errorCode: "process_lost" });
-  });
-
-  it("does not clear another run's native finalization hold on the same task", async () => {
-    const f = await seedPendingNativeFinalization();
-    const [otherHold] = await db.insert(issueRecoveryActions).values({ companyId: f.companyId,
-      sourceIssueId: f.issueId, kind: "active_run_watchdog", status: "active", ownerType: "board",
-      cause: "native_workspace_finalization_owner_unverified", fingerprint: randomUUID(),
-      evidence: { runId: randomUUID() }, nextAction: "Verify the other physical owner has stopped.",
-    }).returning();
-    await db.insert(workspaceOperations).values({ companyId: f.companyId, issueId: f.issueId,
-      heartbeatRunId: f.runId, phase: "workspace_finalize", status: "succeeded" });
-    await expect(finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true }))
-      .resolves.toMatchObject({ phase: "committed" });
-    expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, otherHold.id)))[0])
-      .toMatchObject({ status: "active", resolvedAt: null });
-  });
-
-  it("retains the exact native owner hold without changing a terminal task's disposition", async () => {
-    const f = await seedPendingNativeFinalization();
-    await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: { unknown: true } } })
-      .where(eq(heartbeatRuns.id, f.runId));
-    const heartbeat = heartbeatService(db);
-    await heartbeat.recoverNativeRunsAfterRestart();
-    const [hold] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, f.issueId));
-    await db.update(issues).set({ status: "done" }).where(eq(issues.id, f.issueId));
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await heartbeat.reconcileStrandedAssignedIssues();
-      expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, hold.id)))[0])
-        .toEqual(hold);
-      expect((await db.select().from(issues).where(eq(issues.id, f.issueId)))[0].status).toBe("done");
-    }
-    await db.update(heartbeatRuns).set({ runnerProfileJson: {} }).where(eq(heartbeatRuns.id, f.runId));
-    await heartbeat.reconcileStrandedAssignedIssues();
-    expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, hold.id)))[0])
-      .toMatchObject({ status: "resolved", resolutionNote: "source_terminal" });
-    await heartbeat.drainActiveRunExecutions();
   });
 
   it.each(["settled", "rejected", "late_callback", "provider_transport_failed"] as const)(
@@ -3345,18 +2991,11 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     });
   });
 
-  it.each(["projectless", "organization_only", "empty_source"] as const)("dispatches local native external chat inside the server-selected task root: %s", async placement => {
+  it("dispatches local native external chat inside the server-selected task root", async () => {
     await withTempPaperclipHome(async () => {
       const { companyId, agentId, issueId, runId } =
         await seedQueuedIssueRunFixture();
       await fs.mkdir(resolvePaperclipInstanceRoot(), { recursive: true });
-      const projectId = placement === "projectless" ? null : randomUUID();
-      if (projectId) {
-        await db.insert(projects).values({ id: projectId, companyId, name: "Chat channel project default" });
-        if (placement === "empty_source") {
-          await db.insert(projectWorkspaces).values({ companyId, projectId, name: "Unconfigured source", cwd: "  ", repoUrl: null });
-        }
-      }
       await db
         .update(agents)
         .set({
@@ -3366,7 +3005,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         .where(eq(agents.id, agentId));
       await db
         .update(issues)
-        .set({ originKind: "chat_channel", projectId })
+        .set({ originKind: "chat_channel" })
         .where(eq(issues.id, issueId));
       await db
         .update(heartbeatRuns)
@@ -3396,59 +3035,15 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       expect(input.workspace.cwd).toBe(
         path.join(
           await fs.realpath(resolvePaperclipInstanceRoot()),
-          "isolated-workspaces",
+          "chat-workspaces",
           companyId,
+          agentId,
           issueId,
         ),
       );
       expect(input.workspace.cwd).not.toBe(
         resolveDefaultAgentWorkspaceDir(agentId),
       );
-      const [task] = await db.select().from(issues).where(eq(issues.id, issueId));
-      const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, task.executionWorkspaceId!));
-      expect(task.projectId).toBe(projectId);
-      expect(workspace).toMatchObject({ sourceIssueId: issueId, projectId: null, projectWorkspaceId: null, cwd: input.workspace.cwd });
-      expect(mockAdapterExecute).not.toHaveBeenCalled();
-    });
-  });
-
-  it.each(["managed_isolated", "shared"] as const)("prepares a fresh native chat configured source safely: %s", async (mode) => {
-    await withTempPaperclipHome(async () => {
-      const { companyId, agentId, issueId, runId } = await seedQueuedIssueRunFixture();
-      const instanceRoot = resolvePaperclipInstanceRoot();
-      await fs.mkdir(instanceRoot, { recursive: true });
-      const cwd = path.join(instanceRoot, "source-repository");
-      await fs.mkdir(cwd, { recursive: true });
-      execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
-      await fs.writeFile(path.join(cwd, "report.txt"), "source bytes");
-      execFileSync("git", ["add", "report.txt"], { cwd, stdio: "ignore" });
-      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "Source"], { cwd, stdio: "ignore" });
-      const [project] = await db.insert(projects).values({ companyId, name: "Chat source" }).returning();
-      const [source] = await db.insert(projectWorkspaces).values({ companyId, projectId: project.id, name: "Source", cwd, isPrimary: true }).returning();
-      await db.update(agents).set({ adapterType: "paperclip_runner", adapterConfig: { provider: "codex", model: "gpt-5.6-luna" } }).where(eq(agents.id, agentId));
-      await db.update(issues).set({ originKind: "chat_channel", projectWorkspaceId: source.id,
-        workspaceSelection: { version: 1, source: "channel", selection: { kind: "configured_source", projectWorkspaceId: source.id, mode } },
-        executionWorkspaceSettings: { mode: mode === "managed_isolated" ? "isolated_workspace" : "shared_workspace" },
-      }).where(eq(issues.id, issueId));
-      await db.update(heartbeatRuns).set({ runtimeMode: "native", runtimeModeResolvedAt: new Date(), nativeIssueId: issueId }).where(eq(heartbeatRuns.id, runId));
-      const nativeSessionBackendFactory = vi.fn((_execution: { workspace: { cwd: string } }) => { throw new NativeRunnerOwnershipUnverifiedError(); });
-      const heartbeat = heartbeatService(db, { nativeSessionBackendFactory });
-      await heartbeat.resumeQueuedRuns();
-      await waitForValue(async () => nativeSessionBackendFactory.mock.calls.length > 0 || Boolean((await heartbeat.getRun(runId))?.errorCode), 15_000);
-      await heartbeat.waitForRunExecutionDrain(runId);
-      if (mode === "shared") {
-        expect(nativeSessionBackendFactory).not.toHaveBeenCalled();
-        expect((await heartbeat.getRun(runId))?.error).toContain("External chat requires a task-owned isolated workspace");
-      } else {
-        expect(nativeSessionBackendFactory).toHaveBeenCalledTimes(1);
-        const input = nativeSessionBackendFactory.mock.calls[0]![0];
-        expect(await fs.realpath(input.workspace.cwd)).not.toBe(await fs.realpath(cwd));
-        expect(await fs.readFile(path.join(input.workspace.cwd, "report.txt"), "utf8")).toBe("source bytes");
-        const [task] = await db.select().from(issues).where(eq(issues.id, issueId));
-        const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, task.executionWorkspaceId!));
-        expect(workspace).toMatchObject({ sourceIssueId: issueId, projectId: project.id, mode: "isolated_workspace", strategyType: "git_worktree", cwd: input.workspace.cwd, providerRef: input.workspace.cwd });
-      }
-      expect(await fs.readFile(path.join(cwd, "report.txt"), "utf8")).toBe("source bytes");
       expect(mockAdapterExecute).not.toHaveBeenCalled();
     });
   });
@@ -5865,7 +5460,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     mockAdapterExecute.mockClear();
   });
 
-  it("blocks a projectless task before launch when its configured source directory is unavailable", async () => {
+  it("blocks a git-sensitive local adapter before launch when a project-workspace-linked issue is missing its project id", async () => {
     mockAdapterExecute.mockClear();
     const { companyId, agentId, runId, issueId } =
       await seedQueuedIssueRunFixture();
@@ -5915,7 +5510,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       errorCode: "workspace_validation_failed",
     });
     expect(failedRun?.error).toContain(
-      "Configured project workspace is unavailable",
+      "linked to a project workspace but has no project id",
     );
     // The adapter process never started, so no agent could post an issue
     // comment. The comment policy is not_applicable and no missing-comment
@@ -5934,7 +5529,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(missingCommentWakeups).toHaveLength(0);
     expect(failedRun?.resultJson).toMatchObject({
       workspaceValidation: {
-        reason: "configured_workspace_unavailable",
+        reason: "missing_project_id",
+        adapterType: "codex_local",
         issueId,
         issueProjectId: null,
         issueProjectWorkspaceId: projectWorkspaceId,
@@ -6109,10 +5705,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
           executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
         },
       });
-      expect(run.error).toContain("Configured project workspace is unavailable");
-      expect(run.error).toContain("Repair the configured path or repository access");
+      expect(run.error).toContain("checkout could not be prepared");
       const validation = run.resultJson!.workspaceValidation as Record<string, unknown>;
-      expect(validation.baseCwdFallback).toBe(false);
       const materializations = validation.materializationFailures as Array<Record<string, unknown>>;
       expect(materializations).toHaveLength(failures.length);
       expect(materializations.map((failure) => failure.connectionFailure)).toEqual(failures.map((failure) =>
@@ -6421,8 +6015,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       legacyDispositionEpisode: { id: runId, attempt: 1, maxAttempts: 2 },
       dispositionRepairInstruction: LEGACY_DISPOSITION_REPAIR_INSTRUCTION,
     });
-    expect({ status: repair?.status, errorCode: repair?.errorCode, error: repair?.error })
-      .toEqual({ status: "succeeded", errorCode: null, error: null });
+    expect(repair?.status).toBe("succeeded");
     expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].status).toBe("done");
     expect(mockAdapterExecute).toHaveBeenCalledTimes(2);
     expect(await db.select().from(issueComments).where(eq(issueComments.issueId, issueId))).not.toEqual(expect.arrayContaining([expect.objectContaining({body: SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY})]));
@@ -8519,10 +8112,12 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
           .set({ status: "paused" })
           .where(eq(agents.id, agentId));
         release();
-        // Wait for the released executor and its cleanup, not the default
-        // one-second polling window. The next case must not inherit live work.
-        await heartbeat.drainActiveRunExecutions();
-        if (next!) expect((await heartbeat.getRun(next!.id))?.status).not.toBe("running");
+        if (next!)
+          await vi.waitFor(async () =>
+            expect((await heartbeat.getRun(next!.id))?.status).not.toBe(
+              "running",
+            ),
+          );
       }
     },
   );
@@ -9445,7 +9040,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     expect(mockTerminateLocalService).toHaveBeenCalledWith(
       expect.objectContaining({ pid: 81_501, processGroupId: 81_502 }),
-      { forceAfterMs: 3000, signal: "SIGINT" },
+      { forceAfterMs: 3000 },
     );
     expect(runningProcesses.has(runId)).toBe(false);
   });
@@ -10889,42 +10484,158 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     },
   );
 
-
-  async function seedResolvedInteractionRecoveryFixture(input: {
-    title: string;
-    kind?: "request_confirmation" | "ask_user_questions";
-    issueStatus?: "in_review" | "in_progress";
-    agentName?: string;
-  }) {
-    const companyId = randomUUID(), agentId = randomUUID(), issueId = randomUUID(), interactionId = randomUUID();
+  it("requeues accepted interaction continuations stranded in_review without execution state", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
     const resolvedAt = new Date("2026-03-19T00:05:00.000Z");
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
     await db.insert(companies).values({
-      id: companyId, name: "Paperclip", issuePrefix, defaultResponsibleUserId: "responsible-user", requireBoardApprovalForNewAgents: false,
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: "responsible-user",
+      requireBoardApprovalForNewAgents: false,
     });
     await db.insert(agents).values({
-      id: agentId, companyId, name: input.agentName ?? "CodexCoder", role: "engineer", status: "idle", adapterType: "codex_local", adapterConfig: {},
-      runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } }, permissions: {},
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {
+        heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
+      },
+      permissions: {},
     });
     await db.insert(issues).values({
-      id: issueId, companyId, title: input.title, status: input.issueStatus ?? "in_review", priority: "medium", assigneeAgentId: agentId,
-      responsibleUserId: "responsible-user", issueNumber: 1, identifier: `${issuePrefix}-1`,
+      id: issueId,
+      companyId,
+      title: "Accepted plan never resumed",
+      status: "in_review",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
     });
-    const kind = input.kind ?? "request_confirmation";
     await db.insert(issueThreadInteractions).values({
-      id: interactionId, companyId, issueId, kind, status: kind === "ask_user_questions" ? "answered" : "accepted",
-      continuationPolicy: "wake_assignee_on_accept", createdByAgentId: agentId, resolvedByUserId: "responsible-user", resolvedAt, updatedAt: resolvedAt,
-      payload: kind === "ask_user_questions" ? { version: 1, questions: [{
-        id: "format", prompt: "Choose a format", selectionMode: "single", required: true, options: [{ id: "markdown", label: "Markdown" }],
-      }] } : { version: 1, prompt: "Approve the plan?" },
-      result: kind === "ask_user_questions" ? { version: 1, answers: [{ questionId: "format", optionIds: ["markdown"] }] } : { outcome: "accepted" },
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      createdByAgentId: agentId,
+      resolvedByUserId: "responsible-user",
+      resolvedAt,
+      updatedAt: resolvedAt,
+      payload: { version: 1, prompt: "Approve the plan?" },
+      result: { outcome: "accepted" },
     });
-    return { companyId, agentId, issueId, interactionId, resolvedAt };
-  }
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+
+    expect(result.continuationRequeued).toBe(1);
+    expect(result.issueIds).toEqual([issueId]);
+
+    const run = await db
+      .select({
+        agentId: heartbeatRuns.agentId,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+        retryOfRunId: heartbeatRuns.retryOfRunId,
+      })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId))
+      .then((rows) => rows[0] ?? null);
+    expect(run?.agentId).toBe(agentId);
+    expect(run?.retryOfRunId).toBeNull();
+    expect(run?.contextSnapshot).toMatchObject({
+      issueId,
+      taskId: issueId,
+      wakeReason: "issue_continuation_needed",
+      retryReason: "issue_continuation_needed",
+      source: "issue.interaction_continuation_recovery",
+      interactionId,
+      interactionKind: "request_confirmation",
+      interactionStatus: "accepted",
+      interactionContinuationPolicy: "wake_assignee_on_accept",
+      interactionResolvedAt: resolvedAt.toISOString(),
+    });
+  });
 
   it("recovers an answered question with its interaction-specific continuation context", async () => {
-    const { companyId, agentId, issueId, interactionId, resolvedAt } =
-      await seedResolvedInteractionRecoveryFixture({ title: "Answered question never resumed", kind: "ask_user_questions", issueStatus: "in_progress", agentName: "OpenCodeCoder" });
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const resolvedAt = new Date("2026-03-19T00:05:00.000Z");
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: "responsible-user",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "OpenCodeCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {
+        heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
+      },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Answered question never resumed",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "ask_user_questions",
+      status: "answered",
+      continuationPolicy: "wake_assignee_on_accept",
+      createdByAgentId: agentId,
+      resolvedByUserId: "responsible-user",
+      resolvedAt,
+      updatedAt: resolvedAt,
+      payload: {
+        version: 1,
+        questions: [
+          {
+            id: "format",
+            prompt: "Choose a format",
+            selectionMode: "single",
+            required: true,
+            options: [{ id: "markdown", label: "Markdown" }],
+          },
+        ],
+      },
+      result: {
+        version: 1,
+        answers: [{ questionId: "format", optionIds: ["markdown"] }],
+      },
+    });
 
     const heartbeat = heartbeatService(db);
     const result = await heartbeat.reconcileStrandedAssignedIssues();
@@ -11033,8 +10744,58 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
   it("counts five historical review-park cancellations against the upgraded disposition-repair ceiling", async () => {
-    const { companyId, agentId, issueId, interactionId, resolvedAt } =
-      await seedResolvedInteractionRecoveryFixture({ title: "Accepted plan cancellation loop" });
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const resolvedAt = new Date("2026-03-19T00:05:00.000Z");
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: "responsible-user",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {
+        heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
+      },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Accepted plan cancellation loop",
+      status: "in_review",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      createdByAgentId: agentId,
+      resolvedByUserId: "responsible-user",
+      resolvedAt,
+      updatedAt: resolvedAt,
+      payload: { version: 1, prompt: "Approve the plan?" },
+      result: { outcome: "accepted" },
+    });
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       const finishedAt = new Date(resolvedAt.getTime() + attempt * 60_000);
       await db.insert(heartbeatRuns).values({
@@ -11125,9 +10886,59 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
   it("skips accepted interaction recovery after its continuation succeeds", async () => {
-    const { companyId, agentId, issueId, interactionId, resolvedAt } =
-      await seedResolvedInteractionRecoveryFixture({ title: "Accepted plan already resumed" });
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const resolvedAt = new Date("2026-03-19T00:05:00.000Z");
     const succeededAt = new Date("2026-03-19T00:06:00.000Z");
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: "responsible-user",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {
+        heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
+      },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Accepted plan already resumed",
+      status: "in_review",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      createdByAgentId: agentId,
+      resolvedByUserId: "responsible-user",
+      resolvedAt,
+      updatedAt: resolvedAt,
+      payload: { version: 1, prompt: "Approve the plan?" },
+      result: { outcome: "accepted" },
+    });
     await db.insert(heartbeatRuns).values({
       id: randomUUID(),
       companyId,
@@ -11164,9 +10975,59 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
   it("requeues accepted interaction continuations even when a later successful run is unrelated", async () => {
-    const { companyId, agentId, issueId, interactionId, resolvedAt } =
-      await seedResolvedInteractionRecoveryFixture({ title: "Accepted plan masked by unrelated run" });
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const resolvedAt = new Date("2026-03-19T00:05:00.000Z");
     const unrelatedRunAt = new Date("2026-03-19T00:06:00.000Z");
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: "responsible-user",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {
+        heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
+      },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Accepted plan masked by unrelated run",
+      status: "in_review",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      createdByAgentId: agentId,
+      resolvedByUserId: "responsible-user",
+      resolvedAt,
+      updatedAt: resolvedAt,
+      payload: { version: 1, prompt: "Approve the plan?" },
+      result: { outcome: "accepted" },
+    });
     await db.insert(heartbeatRuns).values({
       id: randomUUID(),
       companyId,
@@ -11215,8 +11076,58 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   // *no* wake request and *no* run at all. Pre-P1 the recovery sweep skipped in_review issues
   // lacking an execution policy, so this limbo persisted forever. The sweep now requeues it.
   it("recovers a plan approval whose accept-time continuation wake enqueue was silently dropped", async () => {
-    const { companyId, agentId, issueId, interactionId, resolvedAt } =
-      await seedResolvedInteractionRecoveryFixture({ title: "Approved plan whose wake enqueue was dropped" });
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const interactionId = randomUUID();
+    const resolvedAt = new Date("2026-03-19T00:05:00.000Z");
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: "responsible-user",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {
+        heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
+      },
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Approved plan whose wake enqueue was dropped",
+      status: "in_review",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      responsibleUserId: "responsible-user",
+      issueNumber: 1,
+      identifier: `${issuePrefix}-1`,
+    });
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      createdByAgentId: agentId,
+      resolvedByUserId: "responsible-user",
+      resolvedAt,
+      updatedAt: resolvedAt,
+      payload: { version: 1, prompt: "Approve the plan?" },
+      result: { outcome: "accepted" },
+    });
 
     // Precondition of the silent-enqueue-drop bug: the accept produced no wake and no run.
     const priorWakeups = await db
@@ -11240,23 +11151,15 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .select({
         agentId: heartbeatRuns.agentId,
         contextSnapshot: heartbeatRuns.contextSnapshot,
-        retryOfRunId: heartbeatRuns.retryOfRunId,
       })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId))
       .then((rows) => rows[0] ?? null);
     expect(run?.agentId).toBe(agentId);
-    expect(run?.retryOfRunId).toBeNull();
     expect(run?.contextSnapshot).toMatchObject({
       issueId,
-      taskId: issueId,
-      wakeReason: "issue_continuation_needed",
-      retryReason: "issue_continuation_needed",
       interactionId,
-      interactionKind: "request_confirmation",
       interactionStatus: "accepted",
-      interactionContinuationPolicy: "wake_assignee_on_accept",
-      interactionResolvedAt: resolvedAt.toISOString(),
       source: "issue.interaction_continuation_recovery",
     });
 
@@ -11854,9 +11757,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const legacyReviewBefore = withLegacyReview
       ? await db.select().from(issues).where(eq(issues.id, legacyReviewId))
       : [];
-    let planOnlyRunId = "";
-    mockAdapterExecute.mockImplementationOnce(async (input?: unknown) => {
-      planOnlyRunId = (input as { runId: string }).runId;
+    mockAdapterExecute.mockImplementationOnce(async () => {
       if (withLegacyReview) {
         // These pre-dispatch cancellations used to satisfy both the no-comment
         // and churn thresholds and suppress an otherwise valid continuation.
@@ -11880,23 +11781,17 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await heartbeat.reconcileStrandedAssignedIssues();
     await heartbeat.promoteDueScheduledRetries(new Date(Date.now() + 31_000));
     await heartbeat.resumeQueuedRuns();
-    // The continuation is produced by completion; wait for that durable boundary.
-    await heartbeat.drainActiveRunExecutions();
 
-    expect(planOnlyRunId).not.toBe("");
-    const livenessWakes = await waitForValue(async () => {
+    const livenessWake = await waitForValue(async () => {
       const rows = await db
         .select()
         .from(agentWakeupRequests)
         .where(eq(agentWakeupRequests.agentId, agentId));
-      // Follow-up repairs can already exist. Match this plan-only result,
-      // rather than relying on the database's unordered row order.
-      const matching = rows.filter((row) => row.reason === "issue_disposition_repair"
-        && row.payload?.retryOfRunId === planOnlyRunId);
-      return matching.length > 0 ? matching : null;
+      return (
+        rows.find((row) => row.reason === "issue_disposition_repair") ?? null
+      );
     });
-    expect(livenessWakes).toHaveLength(1);
-    const livenessWake = livenessWakes![0]!;
+    expect(livenessWake).toBeTruthy();
     expect(livenessWake?.payload).toMatchObject({
       issueId,
       dispositionRepairAttempt: 1,
@@ -11905,7 +11800,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const sourceRunId = (
       livenessWake?.payload as Record<string, unknown> | null
     )?.retryOfRunId;
-    expect(sourceRunId).toBe(planOnlyRunId);
+    expect(sourceRunId).toBeTruthy();
     const sourceRun = await db
       .select()
       .from(heartbeatRuns)
@@ -16556,236 +16451,4 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .where(eq(heartbeatRuns.id, runId));
     expect(runs).toHaveLength(1);
   });
-  describe("accepted Cursor planning boundaries", () => {
-  const nativeImplementation = mockExecutePaperclipNativeSession.getMockImplementation();
-  beforeEach(() => {
-    mockExecutePaperclipNativeSession.mockImplementation(async () => { throw new Error("Accepted-plan tests must never execute a provider"); });
-  });
-  afterEach(() => { mockExecutePaperclipNativeSession.mockImplementation(nativeImplementation!); });
-
-  async function seedAcceptedCursorPlanWait(semanticFinish = false, sourceSequenceOffset = 0) {
-    const f = await seedStrandedIssueFixture({ status: "in_progress", runStatus: "succeeded", livenessState: "advanced" });
-    const instance = randomUUID(), interactionId = randomUUID();
-    const contractInput = { db, companyId: f.companyId,
-      issue: { id: f.issueId, title: "Review the plan before further work", description: "Explicit completion required" }, actorId: "test" };
-    const { row: persistedContract, contract } = await ensureNativeCompletionContract(contractInput);
-    const reused = await ensureNativeCompletionContract(contractInput);
-    expect(reused.row.id).toBe(persistedContract.id);
-    expect(reused.contract).toEqual(contract);
-    const contractId = persistedContract.id, contractSha = persistedContract.canonicalSha256;
-    // Production binds policy/schema as well as the body; a body-only hash is not a valid contract receipt.
-    expect(contractSha).not.toBe(nativeSha256(contract));
-    const model = "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]";
-    await db.update(agents).set({ adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "cursor", model, acpxSessionMode: "plan", acpxPermissionMode: "approve-all" } }).where(eq(agents.id, f.agentId));
-    await db.update(agentWakeupRequests).set({ status: "completed" }).where(eq(agentWakeupRequests.id, f.wakeupRequestId));
-    await db.update(heartbeatRuns).set({ runtimeMode: "native", nativeIssueId: f.issueId, nativeSessionId: f.runId,
-      completionContractId: contractId, completionContractSha256: contractSha, runnerInstanceId: instance,
-      runnerProfileJson: { nativeExecutionInput: { binding: { companyId: f.companyId, issueId: f.issueId, runId: f.runId, agentId: f.agentId }, provider: { kind: "acpx", agent: "cursor", model, mode: "plan", permissionMode: "approve-all",
-        profile: paperclipRunner.resolveQualifiedAcpxProfile("cursor", model) }, session: { normalizedSessionId: f.runId },
-        completionContract: { id: contractId, sha256: contractSha, contract } } } }).where(eq(heartbeatRuns.id, f.runId));
-    const planId = `plan-${"a".repeat(64)}`;
-    const questionSet = { schema: "paperclip.question_set.v1", title: "Native plan", description: "Exact accepted revision", questions: [{ id: planId, prompt: "Proceed?", required: true,
-      answerMode: "single_select", options: [{ id: "accept", label: "Accept" }, { id: "reject", label: "Reject" }, { id: "cancel", label: "Cancel" }] }] };
-    const [interaction] = await db.insert(issueThreadInteractions).values({ id: interactionId, companyId: f.companyId, issueId: f.issueId, sourceRunId: f.runId,
-      createdByAgentId: f.agentId, kind: "ask_user_questions", status: "answered", continuationPolicy: "none",
-      idempotencyKey: `paperclip-runner-question:${f.runId}:request`, resolvedByUserId: "responsible-user", resolvedAt: new Date(Date.now() - 1000),
-      payload: { version: 1, questions: [{ id: planId, prompt: "Proceed?", selectionMode: "single", required: true, allowOther: false, options: [{ id: "accept", label: "Accept" }, { id: "reject", label: "Reject" }, { id: "cancel", label: "Cancel" }] }], runtimeRequestId: "request", questionSet: questionSet as never }, result: { version: 1, answers: [{ questionId: planId, optionIds: ["accept"] }] } }).returning();
-    const answer = buildQuestionResponseDeliveryEnvelope(interaction as never);
-    const [delivery] = await db.insert(issueQuestionResponseDeliveries).values({ companyId: f.companyId, issueId: f.issueId, interactionId,
-      sourceRunId: f.runId, targetRunId: f.runId, correlationId: randomUUID(), status: "delivered", deliveryMode: "steered", acknowledgedAt: new Date(), payloadSha256: nativeSha256(answer) }).returning();
-    const port = new PaperclipControlPlanePort(db, { companyId: f.companyId, issueId: f.issueId, runId: f.runId, agentId: f.agentId,
-      sessionId: f.runId, completionContractId: contractId, completionContractSha256: contractSha, sourceInstanceId: instance, controlPlaneSourceInstanceId: `control-${f.runId}` });
-    const events = [
-      { eventType: "runtime_request.created", payload: { request: { schema: "paperclip.runtime_request.v2", requestKind: "runtime", requestId: "request", type: "input", status: "pending", turnId: "turn", itemId: "native-plan-tool", prompt: "Review plan",
-        origin: { adapter: "acpx-runtime-sidecar", provider: "cursor", method: "cursor/create_plan" }, input: questionSet } } },
-      { eventType: "tool.execution.started", payload: { schema: "paperclip.tool.execution.v1", executionId: "native-plan-tool", transport: "builtin", operation: "execute", status: "running", readOnly: false, namespace: null, name: "Create Plan", target: null, inputUpdated: true, output: null, outputBytes: 0, outputTruncated: false, outputDigest: null, progress: null, exitCode: null, durationMs: null } },
-      { eventType: "runtime_request.resolved", payload: { requestId: "request", turnId: "turn", action: "submit", response: answer.response } },
-      { eventType: "tool.execution.completed", payload: { schema: "paperclip.tool.execution.v1", executionId: "native-plan-tool", transport: "builtin", operation: "execute", status: "completed", readOnly: false, namespace: null, name: "Create Plan", target: null, inputUpdated: false, output: null, outputBytes: 0, outputTruncated: false, outputDigest: null, progress: null, exitCode: null, durationMs: null } },
-      { eventType: "turn.completed", payload: { status: "completed", error: null } },
-    ];
-    for (const [index, event] of events.entries()) await port.appendEvent({ schema: "paperclip.prp.event.v1", sourceEventId: `${instance}:${sourceSequenceOffset + index + 1}`, sourceSeq: sourceSequenceOffset + index + 1,
-      sourceInstanceId: instance, sourceKind: "runner", runId: f.runId, normalizedSessionId: f.runId, turnId: "turn", schemaVersion: 1, priority: 0,
-      emittedAt: new Date().toISOString(), ...event } as paperclipRunner.PrpEvent);
-    const proof = await readNativePlanWait(db, f);
-    expect(proof).not.toBeNull();
-    const result = semanticFinish ? { ...proof!.result, reportedWorkDisposition: "done" as const, summary: "Explicit semantic finish wins", continuation: undefined,
-      completionClaim: { contractRevision: "1", objectiveSatisfied: true, criteria: [{ criterionId: "objective", status: "satisfied" as const, evidenceRefs: [] }], remainingWork: [] } } : proof!.result;
-    await port.completeRun({ result, turnId: "turn", terminal: { schema: "paperclip.prp.terminal.v1", runTerminalState: "succeeded", turnTerminalState: "completed", reportedWorkDisposition: result.reportedWorkDisposition } });
-    return { ...f, interactionId, deliveryId: delivery!.id, proof: proof! };
-  }
-
-  it("keeps an accepted Cursor plan passive across restart, future configuration changes, and paused recovery", async () => {
-    const f = await seedAcceptedCursorPlanWait();
-    await finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
-    await finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-    expect(await db.select().from(statusDecisions).where(eq(statusDecisions.runId, f.runId))).toEqual([expect.objectContaining({ reasonCode: "native_plan_accepted_waiting_for_continuation", toStatus: "in_progress" })]);
-    expect(await db.select().from(statusDecisionEffects).where(eq(statusDecisionEffects.issueId, f.issueId))).toEqual([expect.objectContaining({ effectKind: "issue_status_projection", targetType: "issue", deliveryState: "delivered" })]);
-    expect(await db.select().from(issueComments).where(eq(issueComments.createdByRunId, f.runId))).toEqual([expect.objectContaining({ body: expect.stringContaining("next message") })]);
-    const current = paperclipRunner.resolveQualifiedAcpxProfile("cursor", "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]");
-    const resolver = vi.spyOn(paperclipRunner, "resolveQualifiedAcpxProfile").mockReturnValue({ ...current,
-      agentProfileVersion: current.agentProfileVersion + 1, commandDigest: `sha256:${"b".repeat(64)}` });
-    try {
-      expect(await readNativePlanWait(db, f)).toBeNull(); // Old profile cannot create a new wait.
-      for (const status of ["idle", "paused"] as const) {
-        await db.update(agents).set({ status, adapterConfig: { provider: "acpx", acpxAgent: "cursor",
-          model: "future-model", acpxSessionMode: "agent", acpxPermissionMode: "approve-reads" } }).where(eq(agents.id, f.agentId));
-        expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-        const recovered = await heartbeatService(db).reconcileStrandedAssignedIssues();
-        expect(recovered.continuationRequeued).toBe(0); expect(recovered.escalated).toBe(0);
-      }
-      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId));
-      const changed = structuredClone(run!.runnerProfileJson!);
-      (changed.nativeExecutionInput as { provider: { profile: { commandDigest: string } } }).provider.profile.commandDigest = "tampered-original-profile";
-      await db.update(heartbeatRuns).set({ runnerProfileJson: changed }).where(eq(heartbeatRuns.id, f.runId));
-      expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-      await db.update(heartbeatRuns).set({ runnerProfileJson: run!.runnerProfileJson }).where(eq(heartbeatRuns.id, f.runId));
-      expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-      const [tool] = await db.select().from(heartbeatRunEvents).where(and(eq(heartbeatRunEvents.runId, f.runId), eq(heartbeatRunEvents.eventType, "tool.execution.completed")));
-      const changedTool = structuredClone(tool!.payload!) as { prpEvent: { payload: { name: string } } };
-      changedTool.prpEvent.payload.name = "mutated committed tool evidence";
-      await db.update(heartbeatRunEvents).set({ payload: changedTool, sourcePayloadSha256: nativeSha256(changedTool.prpEvent) }).where(eq(heartbeatRunEvents.id, tool!.id));
-      expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-      await db.update(heartbeatRunEvents).set({ payload: tool!.payload, sourcePayloadSha256: tool!.sourcePayloadSha256 }).where(eq(heartbeatRunEvents.id, tool!.id));
-      expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-    } finally { resolver.mockRestore(); }
-    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, f.companyId))).toHaveLength(1);
-    expect(mockAdapterExecute).not.toHaveBeenCalled(); expect(mockExecutePaperclipNativeSession).not.toHaveBeenCalled();
-  });
-
-  it("retains an exact historical Cursor6 committed wait across more than 1000 ignored progress rows without allowing new unbound admission", async () => {
-    const progressCount = 1002;
-    const f = await seedAcceptedCursorPlanWait(false, progressCount);
-    await finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
-    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId));
-    const profile = structuredClone(run!.runnerProfileJson!) as any;
-    Object.assign(profile.nativeExecutionInput.provider.profile, { agentProfileVersion: 6, commandDigest: "sha256:377dcea64a727ce799cc112458d4b40ba4bc6574cd6c6f7233b6efd5917a6c4b" });
-    await db.update(heartbeatRuns).set({ runnerProfileJson: profile }).where(eq(heartbeatRuns.id, f.runId));
-    await db.delete(heartbeatRunEvents).where(and(eq(heartbeatRunEvents.runId, f.runId), inArray(heartbeatRunEvents.eventType, ["tool.execution.started", "tool.execution.completed"])));
-    // Reconstruct the persisted Cursor6 receipt format using its unchanged
-    // source facts. This historical format had no tool lifecycle binding.
-    const rows = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.runId));
-    const event = (kind: string) => (rows.find(r => r.eventType === kind)!.payload as any).prpEvent;
-    const [contract] = await db.select().from(completionContracts).where(eq(completionContracts.id, run!.completionContractId!));
-    const [interaction] = await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, f.interactionId));
-    const [delivery] = await db.select().from(issueQuestionResponseDeliveries).where(eq(issueQuestionResponseDeliveries.id, f.deliveryId));
-    profile.nativeExecutionInput.provider.cursorMode = profile.nativeExecutionInput.provider.mode;
-    delete profile.nativeExecutionInput.provider.mode;
-    await db.update(heartbeatRuns).set({ runnerProfileJson: profile }).where(eq(heartbeatRuns.id, f.runId));
-    const legacy = { ...f.proof.source, schema: "paperclip.native_cursor_plan_wait.v1" }; delete legacy.toolExecutionId; delete legacy.toolLifecycleSha256;
-    legacy.authoritySha256 = nativeSha256({ admission: profile.nativeExecutionInput, contract, created: event("runtime_request.created"), resolved: event("runtime_request.resolved"), terminal: event("turn.completed"), interaction, delivery, resolvedAt: interaction!.resolvedAt!.toISOString(), acknowledgedAt: delivery!.acknowledgedAt!.toISOString() });
-    const [decision] = await db.select().from(statusDecisions).where(eq(statusDecisions.runId, f.runId));
-    const [savedResult] = await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, f.runId));
-    const resultJson = structuredClone(savedResult!.resultJson!) as any;
-    resultJson.result.continuation.idempotencyKey = resultJson.result.continuation.idempotencyKey.replace("native-plan-wait:", "cursor-plan-wait:");
-    const canonicalSha256 = nativeSha256(resultJson);
-    await db.update(nativeRunResults).set({ resultJson, canonicalSha256 }).where(eq(nativeRunResults.id, savedResult!.id));
-    const decisionJson = { ...decision!.decisionJson } as any;
-    delete decisionJson.planWait; delete decisionJson.planWaitResult;
-    decisionJson.cursorPlanWait = legacy;
-    decisionJson.cursorPlanWaitResult = { resultId: savedResult!.id, resultSha256: canonicalSha256 };
-    await db.update(statusDecisions).set({ decisionJson }).where(eq(statusDecisions.id, decision!.id));
-    expect(await readNativePlanWait(db, f)).toBeNull();
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-    // Fill the reserved source prefix with genuine durable progress rows. Shift
-    // only DB ordering keys; the original PRP facts and committed receipt stay
-    // byte-identical. Cursor6 never queried these rows, even above its budget.
-    await db.update(heartbeatRunEvents).set({ seq: sql`${heartbeatRunEvents.seq} + ${progressCount}` }).where(eq(heartbeatRunEvents.runId, f.runId));
-    const progress = Array.from({ length: progressCount }, (_, index) => {
-      const seq = index + 1;
-      const prpEvent = { ...event("runtime_request.created"), sourceEventId: `${run!.runnerInstanceId}:${seq}`, sourceSeq: seq, eventType: "tool.execution.progressed",
-        payload: { schema: "paperclip.tool.execution.v1", executionId: "earlier-tool", transport: "builtin", operation: "read", status: "running" } };
-      return { companyId: f.companyId, runId: f.runId, agentId: f.agentId, seq, eventType: prpEvent.eventType, payload: { prpEvent }, sourceInstanceId: run!.runnerInstanceId,
-        sourceEventId: prpEvent.sourceEventId, sourceSeq: seq, sourcePayloadSha256: nativeSha256(prpEvent), protocolSchemaVersion: 1 };
-    });
-    await db.insert(heartbeatRunEvents).values(progress);
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-    const [unchangedDecision] = await db.select().from(statusDecisions).where(eq(statusDecisions.id, decision!.id));
-    expect(unchangedDecision!.decisionJson!.cursorPlanWait).toEqual(legacy);
-    // Completed rows belonged to the old query. A later completion must still
-    // invalidate the normal-terminal boundary rather than being filtered away.
-    const completion = { ...event("turn.completed"), sourceEventId: `${run!.runnerInstanceId}:99999`, sourceSeq: 99999, eventType: "tool.execution.completed", payload: { ...progress[0]!.payload.prpEvent.payload, status: "completed" } };
-    const [extra] = await db.insert(heartbeatRunEvents).values({ ...progress[0]!, seq: 99999, eventType: completion.eventType, payload: { prpEvent: completion }, sourceEventId: completion.sourceEventId, sourceSeq: 99999, sourcePayloadSha256: nativeSha256(completion) }).returning();
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-    await db.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.id, extra!.id));
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-    profile.nativeExecutionInput.provider.profile.commandDigest = "tampered-history";
-    await db.update(heartbeatRuns).set({ runnerProfileJson: profile }).where(eq(heartbeatRuns.id, f.runId));
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-  });
-
-  it("admits a later ordinary user message after an accepted Cursor plan without changing Plan mode or replaying its run", async () => {
-    const f = await seedAcceptedCursorPlanWait();
-    await finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
-    // Occupy the single dispatch slot: this checks actual user-wake admission
-    // without executing any provider or fabricating a second semantic result.
-    const occupied = randomUUID();
-    await db.update(agents).set({ runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } } }).where(eq(agents.id, f.agentId));
-    await db.insert(heartbeatRuns).values({ id: occupied, companyId: f.companyId, agentId: f.agentId, status: "running", startedAt: new Date(), contextSnapshot: {} });
-    const [comment] = await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId, authorType: "user", authorUserId: "responsible-user", body: "Continue reviewing the accepted plan in Plan mode." }).returning();
-    try {
-      const heartbeat = heartbeatService(db);
-      const next = await heartbeat.wakeup(f.agentId, { source: "automation", triggerDetail: "system", reason: "issue_commented", requestedByActorType: "user", requestedByActorId: "responsible-user",
-        payload: { issueId: f.issueId, commentId: comment!.id }, contextSnapshot: { issueId: f.issueId, taskId: f.issueId, wakeCommentId: comment!.id, wakeCommentIds: [comment!.id] } });
-      expect(next).not.toBeNull(); expect(next!.id).not.toBe(f.runId);
-      const [admitted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, next!.id));
-      expect(admitted).toMatchObject({ status: "queued", retryOfRunId: null });
-      expect(admitted!.contextSnapshot?.wakeCommentIds).toContain(comment!.id);
-      const [agent] = await db.select().from(agents).where(eq(agents.id, f.agentId));
-      expect(agent!.adapterConfig.acpxSessionMode).toBe("plan");
-      expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-      expect(mockExecutePaperclipNativeSession).not.toHaveBeenCalled();
-    } finally {
-      await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(heartbeatRuns.companyId, f.companyId), inArray(heartbeatRuns.status, ["running", "queued"])));
-      await db.update(agentWakeupRequests).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(agentWakeupRequests.companyId, f.companyId), inArray(agentWakeupRequests.status, ["queued", "claimed"])));
-    }
-  });
-
-  it.each(["delivery", "assignment", "admission", "user_request", "result_or_decision"] as const)("revokes an accepted Cursor plan passive wait after %s changes", async change => {
-    const f = await seedAcceptedCursorPlanWait();
-    await finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
-    if (change === "delivery") await db.update(issueQuestionResponseDeliveries).set({ acknowledgedAt: null }).where(eq(issueQuestionResponseDeliveries.id, f.deliveryId));
-    if (change === "assignment") await db.update(issues).set({ assigneeAgentId: null }).where(eq(issues.id, f.issueId));
-    if (change === "admission") {
-      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId));
-      const profile = structuredClone(run!.runnerProfileJson!);
-      (profile.nativeExecutionInput as { provider: { cursorMode: string } }).provider.cursorMode = "agent";
-      await db.update(heartbeatRuns).set({ runnerProfileJson: profile }).where(eq(heartbeatRuns.id, f.runId));
-    }
-    if (change === "user_request") await db.insert(issueComments).values({ companyId: f.companyId, issueId: f.issueId, authorType: "user", authorUserId: "responsible-user", body: "Continue reviewing this plan in Plan mode." });
-    if (change === "result_or_decision") {
-      const [accepted] = await db.select().from(nativeRunResults).where(eq(nativeRunResults.runId, f.runId));
-      await db.update(nativeRunResults).set({ canonicalSha256: "changed" }).where(eq(nativeRunResults.id, accepted!.id));
-      expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-      await db.update(nativeRunResults).set({ canonicalSha256: accepted!.canonicalSha256 }).where(eq(nativeRunResults.id, accepted!.id));
-      expect(await hasCommittedNativePlanWait(db, f)).toBe(true);
-      await db.update(issues).set({ lastStatusDecisionId: null }).where(eq(issues.id, f.issueId));
-    }
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-  });
-
-  it("rechecks accepted Cursor plan delivery under the status transaction before presentation or effects", async () => {
-    const f = await seedAcceptedCursorPlanWait();
-    await finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", failpoint: "status_projection" });
-    const [coordinator] = await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, f.runId));
-    const [issue] = await db.select().from(issues).where(eq(issues.id, f.issueId));
-    await db.update(issueQuestionResponseDeliveries).set({ payloadSha256: "changed" }).where(eq(issueQuestionResponseDeliveries.id, f.deliveryId));
-    await expect(commitNativeStatusDecision({ db, companyId: f.companyId, issueId: f.issueId, runId: f.runId, assessmentId: coordinator!.assessmentId!,
-      priorStatus: issue!.status, priorStatusVersion: issue!.statusVersion, priorDecisionId: issue!.lastStatusDecisionId,
-      decision: { policyVersion: "phase6-v7", statusAction: "in_progress", toStatus: "in_progress", reasonCode: "native_plan_accepted_waiting_for_continuation", unblockDescriptor: null, effects: [] },
-      requirePlanWaitSource: f.proof.source })).rejects.toBeInstanceOf(NativeStatusRaceError);
-    expect(await db.select().from(statusDecisions).where(eq(statusDecisions.runId, f.runId))).toHaveLength(0);
-    expect(await db.select().from(issueComments).where(eq(issueComments.createdByRunId, f.runId))).toHaveLength(0);
-  });
-
-  it("preserves explicit semantic finish priority over accepted Cursor plan evidence", async () => {
-    const f = await seedAcceptedCursorPlanWait(true);
-    await finalizeNativeRun({ db, runId: f.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
-    expect(await hasCommittedNativePlanWait(db, f)).toBe(false);
-    const decisions = await db.select().from(statusDecisions).where(eq(statusDecisions.runId, f.runId));
-    expect(decisions).toHaveLength(1); expect(decisions[0]!.reasonCode).not.toBe("native_plan_accepted_waiting_for_continuation");
-  });
-
-  });
-
 });

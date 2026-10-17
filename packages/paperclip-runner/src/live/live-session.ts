@@ -1,5 +1,3 @@
-import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
-import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { normalizeProviderNotice } from "../drivers/provider-notices.js";
 import { liveRunResultFeedback } from "./run-result-feedback.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -136,7 +134,6 @@ export interface CapabilityLiveSessionConfigSnapshot {
   driver?: "codex_app_server" | "opencode_server" | "claude_managed_agents_api" | "aws_agentcore_harness_api" | "acpx_runtime";
   providerVersion?: string | null;
   acpxAgent?: QualifiedAcpxAgent;
-  piThinkingLevel?: "off" | "low" | "high" | "max";
   acpxProfile?: QualifiedAcpxProfile;
   managedProfile?: {
     profileId: string;
@@ -327,7 +324,6 @@ export interface CreateCapabilityLiveSessionInput {
   workingDirectory?: string;
   provider?: "codex" | "opencode" | "claude_managed" | "aws_agentcore" | "acpx";
   acpxAgent?: QualifiedAcpxAgent;
-  piThinkingLevel?: "off" | "low" | "high" | "max";
   requestedModel?: string;
   managedProfile?: CapabilityLiveSessionConfigSnapshot["managedProfile"];
   agentCoreProfile?: CapabilityLiveSessionConfigSnapshot["agentCoreProfile"];
@@ -652,7 +648,6 @@ export function assertCapabilityLiveSessionSnapshot(
   } else if (provider === "opencode" || provider === "claude_managed" || provider === "aws_agentcore" || provider === "acpx") {
     throw new Error(`capability_live_checkpoint_corrupt: missing ${provider === "opencode" ? "OpenCode" : provider === "claude_managed" ? "Claude Agent" : provider === "aws_agentcore" ? "AWS AgentCore" : "ACPX"} model`);
   }
-  resolvePiThinkingLevel(provider === "acpx" ? String(config.acpxAgent) : "", config.piThinkingLevel);
   if (provider === "acpx") {
     const agent = config.acpxAgent;
     if (agent !== "pi" && agent !== "claude" && agent !== "codex" && agent !== "grok" && agent !== "cursor" && agent !== "copilot") {
@@ -906,9 +901,8 @@ export class CapabilityLiveSessionService {
   }
 
   async create(input: CreateCapabilityLiveSessionInput = {}): Promise<CapabilityLiveSession> {
-    resolvePiThinkingLevel(input.provider === "acpx" ? input.acpxAgent ?? "codex" : "", input.piThinkingLevel);
     if (input.provider === "acpx" && input.acpxAgent !== undefined
-      && ACPX_CAPABILITY_PROFILES[input.acpxAgent].qualification === "pending"
+      && ["pi", "copilot"].includes(input.acpxAgent)
       && this.#transportOptions.acpxCandidateProfile !== input.acpxAgent) {
       throw new Error("The candidate ACPX profile requires explicit evaluation opt-in");
     }
@@ -980,7 +974,6 @@ export class CapabilityLiveSessionService {
           : input.provider === "acpx" ? acpxProfile!.acpxVersion : null,
         ...(acpxProfile === null ? {} : {
           acpxAgent: acpxProfile.agent,
-          ...(acpxProfile.agent === "pi" ? { piThinkingLevel: resolvePiThinkingLevel("pi", input.piThinkingLevel) } : {}),
           acpxProfile: structuredClone(acpxProfile),
         }),
         ...(input.managedProfile === undefined
@@ -1514,7 +1507,7 @@ export class CapabilityLiveSession {
   async sendMessage(
     message: string,
     /** Launch-only diagnostics may opt out; qualification campaigns must not. */
-    options: { allowMissingUsage?: boolean; reasoningMode?: "default" | "disabled" } = {},
+    options: { allowMissingUsage?: boolean } = {},
   ): Promise<CapabilityLiveTurnResult> {
     const value = message.trim();
     if (value.length === 0) throw new Error("Capability live messages cannot be empty");
@@ -1617,7 +1610,6 @@ export class CapabilityLiveSession {
         permissions: CODEX_PERMISSION_PROFILE,
         runtimeWorkspaceRoots: [this.#config.workingDirectory],
         input: [userInput(value)],
-        ...(options.reasoningMode === undefined ? {} : { reasoningMode: options.reasoningMode }),
       });
     } catch (error) {
       if (this.#pendingTurnAdmission !== admission) {
@@ -2392,7 +2384,6 @@ export class CapabilityLiveSession {
         : {}),
       ...(provider === "acpx" && this.#config.acpxAgent ? {
         acpxAgent: this.#config.acpxAgent,
-        ...(this.#config.acpxAgent === "pi" ? { piThinkingLevel: this.#config.piThinkingLevel } : {}),
       } : {}),
       ...(provider === "claude_managed" && this.#config.managedProfile
         ? {

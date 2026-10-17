@@ -55,7 +55,6 @@ export interface CompanySkill {
   authorName: string | null;
   homepageUrl: string | null;
   categories: string[];
-  accessSourceId?: string | null;
   sharingScope: CompanySkillSharingScope;
   publicShareToken: string | null;
   forkedFromSkillId: string | null;
@@ -90,7 +89,6 @@ export interface CompanySkillListItem {
   authorName: string | null;
   homepageUrl: string | null;
   categories: string[];
-  accessSourceId?: string | null;
   sharingScope: CompanySkillSharingScope;
   publicShareToken: string | null;
   forkedFromSkillId: string | null;
@@ -158,8 +156,6 @@ export interface CompanySkillCategoryCount {
 }
 
 export interface CompanySkillVersion {
-  repositorySnapshotId?: string | null;
-  repositorySkillPath?: string | null;
   id: string;
   companyId: string;
   companySkillId: string;

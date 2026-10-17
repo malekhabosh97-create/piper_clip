@@ -1,4 +1,3 @@
-import { createAgentLifecycle } from "./agent-lifecycle.js";
 import { and, eq, isNull, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
@@ -184,7 +183,6 @@ export function pluginManagedAgentService(
   options: PluginManagedAgentServiceOptions,
 ) {
   const agentSvc = agentService(db);
-  const agentSvcLifecycle = createAgentLifecycle(db);
   const approvalSvc = approvalService(db);
   const instructions = agentInstructionsService(db);
 
@@ -488,7 +486,7 @@ export function pluginManagedAgentService(
     const requiresApproval = company.requireBoardApprovalForNewAgents;
     const adapterType = await resolveManagedAdapterType(companyId, declaration);
     const initialStatus = requiresApproval ? "pending_approval" : declaration.status ?? "idle";
-    let created = await agentSvcLifecycle.requestHire(companyId, {
+    let created = await agentSvc.create(companyId, {
       ...declarationPatch(declaration, { adapterType }),
       status: initialStatus,
       pauseReason: initialStatus === "paused" ? managedAgentPauseReason(options.pluginKey) : null,
@@ -571,13 +569,26 @@ export function pluginManagedAgentService(
   ) {
     if (
       declaration.status !== "paused"
-      || agent.lifecycleState !== "paused"
+      || agent.status !== "paused"
       || agent.pauseReason !== null
     ) {
       return agent;
     }
 
-    const updated = await agentSvcLifecycle.pauseAgent(agent.id, managedAgentPauseReason(options.pluginKey));
+    const updated = await db
+      .update(agents)
+      .set({
+        pauseReason: managedAgentPauseReason(options.pluginKey),
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(agents.id, agent.id),
+        eq(agents.companyId, companyId),
+        eq(agents.status, "paused"),
+        isNull(agents.pauseReason),
+      ))
+      .returning({ id: agents.id })
+      .then((rows) => rows[0] ?? null);
 
     if (!updated) {
       const current = await agentSvc.getById(agent.id) as Agent | null;

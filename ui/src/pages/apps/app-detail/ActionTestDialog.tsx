@@ -454,11 +454,11 @@ function ActionTester({
   }, [running]);
 
   const run = useMutation({
-    mutationFn: async (parameters: Record<string, unknown>) => {
+    mutationFn: async () => {
       const result = await toolsApi.runTestCall(connectionId, {
         agentId: agent.id,
         toolName: entry.toolName,
-        parameters,
+        parameters: values,
       });
       return result;
     },
@@ -496,7 +496,7 @@ function ActionTester({
     setElapsedMs(0);
     setOutcome(null);
     setRunning(true);
-    run.mutate(values);
+    run.mutate();
   };
 
   const onReset = () => {

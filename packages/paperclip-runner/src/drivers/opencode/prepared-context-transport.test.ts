@@ -30,7 +30,6 @@ describe("prepared OpenCode context transport", () => {
       runtimeDirectory: root,
       command: fixture,
       conversationMode: "prepared",
-      systemInstructions: "Prepared agent instructions.",
       environment: { PATH: process.env.PATH, OPENROUTER_API_KEY: "fixture-key" },
       fetch: async (input, init) => {
         if (String(input).endsWith("/prompt_async"))
@@ -46,7 +45,6 @@ describe("prepared OpenCode context transport", () => {
     });
     await session.startTurn({
       message: { role: "user", text: "prepared OpenCode initial wake" },
-      reasoningMode: "disabled",
     });
     for await (const event of session.events()) {
       if (event.eventType === "turn.completed") break;
@@ -69,8 +67,6 @@ describe("prepared OpenCode context transport", () => {
       [{ type: "text", text: "completion-only OpenCode continuation" }],
     ]);
     expect(JSON.stringify(submitted)).not.toContain('"task"');
-    expect(submitted.map(body => body.variant)).toEqual(["paperclip-no-reasoning", "paperclip-default"]);
-    expect(submitted.map(body => body.system)).toEqual(["Prepared agent instructions.", "Prepared agent instructions."]);
     await recovered!.session!.close({ reason: "prepared-test-recovery" });
   });
 });

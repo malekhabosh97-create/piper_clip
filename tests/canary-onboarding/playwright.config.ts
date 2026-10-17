@@ -34,10 +34,12 @@ function shellQuote(value: string): string {
 }
 
 const command = [
-  shellQuote(process.execPath),
-  shellQuote(path.resolve("tests/canary-onboarding/start-published-canary.mjs")),
-  shellQuote(canaryVersion),
-  shellQuote(workspace),
+  "npx",
+  "--yes",
+  shellQuote(`paperclipai@${canaryVersion}`),
+  "onboard",
+  "--yes",
+  "--data-dir",
   shellQuote(dataDir),
   ">",
   shellQuote(serverLog),
@@ -74,7 +76,6 @@ export default defineConfig({
     command,
     url: `${baseUrl}/api/health`,
     reuseExistingServer: false,
-    gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
     timeout: 300_000,
     env: {
       ...process.env,

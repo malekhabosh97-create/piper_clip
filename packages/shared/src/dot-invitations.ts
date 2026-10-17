@@ -1,5 +1,3 @@
-import type { AgentLifecycleState } from "./types/agent-lifecycle.js";
-
 /** JSON responses for the operator-owned Dot invitation flow. Pairing capabilities are transient. */
 export interface DotBinding {
   id: string;
@@ -19,8 +17,6 @@ export interface DotConnection {
   enabled: boolean;
   resourceUrl: string | null;
   agentStatus: string;
-  agentLifecycleState: AgentLifecycleState;
-  canConfigureConnection: boolean;
   binding: DotBinding | null;
 }
 export interface DotPairing { bindingId: string; pairingCode: string; expiresAt: string }

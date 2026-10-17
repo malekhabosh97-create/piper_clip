@@ -5,9 +5,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agents,
-  authUsers,
   companies,
-  companyMemberships,
   createDb,
   environments,
   executionWorkspaces,
@@ -61,26 +59,14 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
   let stopDb: (() => Promise<void>) | null = null;
   let db!: ReturnType<typeof createDb>;
   const tempRoots: string[] = [];
-  const heartbeats: ReturnType<typeof heartbeatService>[] = [];
-
-  async function grantResponsibleUser(companyId: string, userId: string) {
-    await db.insert(authUsers).values({
-      id: userId, name: "Responsible user", email: `${userId}@example.test`,
-      createdAt: new Date(), updatedAt: new Date(),
-    }).onConflictDoNothing();
-    await db.insert(companyMemberships).values({
-      companyId, principalType: "user", principalId: userId, status: "active", membershipRole: "member",
-    });
-  }
 
   beforeAll(async () => {
     const started = await startEmbeddedPostgresTestDatabase("heartbeat-plugin-environment");
-    stopDb = started.cleanup;
+    stopDb = started.stop;
     db = createDb(started.connectionString);
   }, 20_000);
 
   afterEach(async () => {
-    for (const heartbeat of heartbeats.splice(0)) await heartbeat.drainActiveRunExecutions();
     adapterExecute.mockClear();
     while (tempRoots.length > 0) {
       const root = tempRoots.pop();
@@ -130,7 +116,6 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    await grantResponsibleUser(companyId, "responsible-user");
     await db.insert(projects).values({
       id: projectId,
       companyId,
@@ -210,7 +195,6 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
     });
 
     const heartbeat = heartbeatService(db, { pluginWorkerManager: workerManager });
-    heartbeats.push(heartbeat);
     const run = await heartbeat.wakeup(agentId, {
       source: "on_demand",
       triggerDetail: "manual",
@@ -376,8 +360,6 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
         updatedAt: new Date(),
       },
     ]);
-    await grantResponsibleUser(companyAId, "responsible-user-a");
-    await grantResponsibleUser(companyBId, "responsible-user-b");
     await db.insert(projects).values([
       {
         id: projectAId,
@@ -450,7 +432,6 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
     ]);
 
     const heartbeat = heartbeatService(db, { pluginWorkerManager: workerManager });
-    heartbeats.push(heartbeat);
     const sharedRun = await heartbeat.wakeup(agentAId, {
       source: "on_demand",
       triggerDetail: "manual",
@@ -542,7 +523,6 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    await grantResponsibleUser(companyId, "responsible-user");
     await db.insert(projects).values({
       id: projectId,
       companyId,
@@ -677,7 +657,6 @@ describeEmbeddedPostgres("heartbeat plugin environments", () => {
     });
 
     const heartbeat = heartbeatService(db, { pluginWorkerManager: workerManager });
-    heartbeats.push(heartbeat);
     const run = await heartbeat.wakeup(agentId, {
       source: "assignment",
       triggerDetail: "manual",

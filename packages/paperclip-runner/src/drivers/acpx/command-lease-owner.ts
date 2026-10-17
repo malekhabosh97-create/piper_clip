@@ -3,14 +3,13 @@ import type { VerifiedAcpxCommandLease } from "./installation-integrity.js";
 /** Keep each launch single-use while owning replacements for transient ACP controls. */
 export function createAcpxCommandLeaseOwner(
   initial: VerifiedAcpxCommandLease,
-  openCommand: (signal: AbortSignal) => Promise<VerifiedAcpxCommandLease>,
+  openCommand: () => Promise<VerifiedAcpxCommandLease>,
 ) {
   const leases = new Set([initial]);
   let current = initial;
   let consumed = false;
   let closing = false;
   let refresh: Promise<void> | null = null;
-  const admission = new AbortController();
   const command: VerifiedAcpxCommandLease = {
     spawn(...args) {
       if (closing) throw new Error("Verified ACPX command owner is closing");
@@ -19,7 +18,6 @@ export function createAcpxCommandLeaseOwner(
     },
     async close() {
       closing = true;
-      admission.abort(new Error("Verified ACPX command owner is closing"));
       // Late acquisitions remain owned. Retry every lease whose close fails.
       await refresh?.catch(() => undefined);
       const failures: unknown[] = [];
@@ -41,7 +39,7 @@ export function createAcpxCommandLeaseOwner(
       if (!consumed) return;
       if (!refresh) {
         refresh = Promise.resolve()
-          .then(() => openCommand(admission.signal))
+          .then(openCommand)
           .then((replacement) => {
             leases.add(replacement);
             if (closing) throw new Error("Verified ACPX command owner closed during refresh");

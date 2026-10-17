@@ -2,23 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { approvalService } from "../services/approvals.ts";
 import { companies } from "@paperclipai/db";
 
-vi.mock("../services/budgets.js", async importOriginal => ({
-  ...await importOriginal<typeof import("../services/budgets.js")>(),
+vi.mock("../services/budgets.js", () => ({
   budgetService: () => ({ deliverPendingEnforcement: vi.fn(async () => {}) }),
   budgetServiceInTransaction: () => ({ upsertPolicy: vi.fn(async () => {}) }),
 }));
 
 const mockAgentService = vi.hoisted(() => ({
   activatePendingApproval: vi.fn(),
-  getById: vi.fn(async () => ({ id: "agent-1" })),
   create: vi.fn(),
   terminate: vi.fn(),
 }));
 
 const mockNotifyHireApproved = vi.hoisted(() => vi.fn());
 
-vi.mock("../modules/agent-lifecycle/adapters/records.js", () => ({
-  agentRecords: vi.fn(() => ({ ...mockAgentService, rejectPendingHire: mockAgentService.terminate })),
+vi.mock("../services/agents.js", () => ({
+  agentService: vi.fn(() => mockAgentService),
 }));
 
 vi.mock("../services/hire-hook.js", () => ({
@@ -116,7 +114,7 @@ describe("approvalService resolution idempotency", () => {
     const result = await svc.approve("approval-1", "board", "ship it");
 
     expect(result.applied).toBe(true);
-    expect(mockAgentService.activatePendingApproval).toHaveBeenCalledWith("agent-1", approved.payload, approved.requestedByUserId);
+    expect(mockAgentService.activatePendingApproval).toHaveBeenCalledWith("agent-1", approved.payload);
     expect(mockNotifyHireApproved).toHaveBeenCalledTimes(1);
   });
 
@@ -163,7 +161,7 @@ describe("approvalService resolution idempotency", () => {
       expect.objectContaining({
         adapterConfig: approved.payload.adapterConfig,
       }),
-      { createdByUserId: expectedCreator, responsibleUserId: requestedByUserId },
+      { createdByUserId: expectedCreator },
     );
   });
 });

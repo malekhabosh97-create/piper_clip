@@ -3,7 +3,6 @@ import express from "express";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@paperclipai/db";
-import { installDatabaseWorkSignals } from "../../../packages/db/src/work-signals.js";
 import { cloudWarmStandbyMiddleware, cloudWarmStandbyServerOptions } from "../middleware/cloud-warm-standby.js";
 import { healthRoutes } from "../routes/health.js";
 import { emailChannelService } from "../services/email-channels.js";
@@ -125,7 +124,7 @@ describe("unclaimed Cloud background work", () => {
     vi.useFakeTimers();
     let enabled = false;
     const select = vi.fn(() => { throw new Error("SQL probe"); });
-    const db = installDatabaseWorkSignals({ select, execute: vi.fn(), transaction: vi.fn() }) as unknown as Db;
+    const db = { select } as unknown as Db;
     const email = emailChannelService(db, { heartbeat: { wakeup: vi.fn() }, isBackgroundWorkEnabled: () => enabled });
     const scheduler = createPluginJobScheduler({
       db,

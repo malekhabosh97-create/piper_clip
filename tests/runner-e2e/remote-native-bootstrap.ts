@@ -173,8 +173,6 @@ export function createRemoteNativeBootstrap(input: {
             if (lastReadError !== undefined) throw lastReadError;
             return state;
           },
-          // Native runs can retain the legacy "preparing" stage. The observer's
-          // runtime-ready RPC proves the actual pinned daemon before installation.
           accept: state => !state.rejection && state.owned && state.run?.status === "running" && Boolean(state.lease)
             && Date.now() < admissionDeadlineAt,
           reject: state => state.rejection,

@@ -23,8 +23,6 @@ export const githubReviewPolicySchema = z
     events: z
       .array(z.enum(GITHUB_REVIEW_EVENTS))
       .max(GITHUB_REVIEW_EVENTS.length),
-    issueOpened: z.boolean().optional(),
-    issueOpenedInstructions: z.string().max(12000).optional(),
     reviewDrafts: z.boolean(),
     reviewBotAuthors: z.boolean(),
     includeAuthors: shortList,
@@ -55,8 +53,7 @@ export const githubReviewPolicySchema = z
 const person = {
   githubUserId: githubIdSchema,
   login: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}(?:\[bot\])?$/),
-  // Accept legacy saved configurations; automatic scheduling uses author filters.
-  automaticReviews: z.boolean().optional(),
+  automaticReviews: z.boolean(),
 };
 export const githubAllowedPersonSchema = z.discriminatedUnion("kind", [
   z

@@ -413,9 +413,3 @@ describe("adapter auth-signal route", () => {
     expect(mockResolveEnvironmentExecutionTarget).not.toHaveBeenCalled();
   });
 });
-
-vi.mock("../services/agent-lifecycle.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../services/agent-lifecycle.js")>();
-  return { ...actual, createAgentLifecycle: () => ({
-  }) };
-});

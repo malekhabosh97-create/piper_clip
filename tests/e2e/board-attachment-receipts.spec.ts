@@ -9,7 +9,7 @@ import {
 
 // Real local Board UI, upload storage, comment HTTP routes, and disposable DB.
 // Only the interface flag and explicit transport/upload rejection faults are mocked.
-// Tasks have no recipient: no agent, runner, or provider is contacted.
+// Tasks belong to the Board user: no agent, runner, or provider is contacted.
 type Attachment = {
   id: string;
   issueCommentId: string | null;
@@ -27,13 +27,6 @@ async function body<T>(
 }
 
 async function setup(page: Page, request: APIRequestContext, classic: boolean) {
-  // Announcements can appear after navigation or reload and cover the classic
-  // composer's attachment button. Dismiss through the same UI as a Board user.
-  await page.addLocatorHandler(
-    page.getByRole("complementary", { name: "Paperclip announcements", exact: true })
-      .getByRole("button", { name: "Dismiss announcement", exact: true }),
-    async (dismiss) => { await dismiss.click(); },
-  );
   const company = await body<{ id: string; issuePrefix: string }>(
     await request.post("/api/companies", {
       data: { name: `Board receipt browser ${randomUUID()}` },
@@ -44,9 +37,7 @@ async function setup(page: Page, request: APIRequestContext, classic: boolean) {
       data: {
         title: "Inspect the newly uploaded Board files",
         status: "todo",
-        // Keep attachment sends on the comment route. A task assigned to the
-        // current human now suggests an empty recipient and sends a reassignment.
-        assigneeUserId: null,
+        assigneeUserId: "local-board",
       },
     }),
   );
@@ -80,14 +71,6 @@ async function setup(page: Page, request: APIRequestContext, classic: boolean) {
     composer,
     editor,
     send,
-    sendComment: async () => {
-      await send.click();
-      if (classic) {
-        const confirm = page.getByTestId("issue-chat-no-assignee-send-anyway");
-        await expect(confirm).toBeVisible();
-        await confirm.click();
-      }
-    },
     attachments: () =>
       request
         .get(`/api/issues/${issue.id}/attachments`)
@@ -193,7 +176,7 @@ for (const classic of [false, true]) {
         req.method() === "POST" &&
         new URL(req.url()).pathname.endsWith("/comments"),
     );
-    await fixture.sendComment();
+    await fixture.send.click();
     expect((await outbound).postDataJSON().attachmentIds.sort()).toEqual(
       receipts.map((row) => row.id).sort(),
     );
@@ -254,7 +237,7 @@ for (const classic of [false, true]) {
       accepted = true;
       await route.abort("connectionreset");
     });
-    await fixture.sendComment();
+    await fixture.send.click();
     await expect.poll(() => accepted).toBe(true);
     expect(await fixture.comments()).toHaveLength(1);
     expect(acceptedRequestId).toEqual(expect.any(String));
@@ -286,7 +269,7 @@ for (const classic of [false, true]) {
     await fixture.editor.fill(
       "A deliberately new comment after the original receipt settled.",
     );
-    await fixture.sendComment();
+    await fixture.send.click();
     await expect.poll(async () => (await fixture.comments()).length).toBe(2);
   });
 
@@ -308,14 +291,14 @@ for (const classic of [false, true]) {
         body: JSON.stringify({ error: "Fixture policy rejected this attempt" }),
       });
     });
-    await fixture.sendComment();
+    await fixture.send.click();
     await expect(fixture.editor).toContainText("Known rejection,");
     await expect(fixture.send).toBeEnabled();
     expect(await fixture.comments()).toHaveLength(0);
     await page.reload();
     await expect(fixture.editor).toContainText("Known rejection,");
     await expect(fixture.composer.getByRole("alert")).toHaveCount(0);
-    await fixture.sendComment();
+    await fixture.send.click();
     await expect.poll(async () => (await fixture.comments()).length).toBe(1);
     expect(
       (await fixture.attachments()).find((row) => row.id === receipt.id)
@@ -349,7 +332,7 @@ for (const classic of [false, true]) {
       await route.fulfill({ response }).catch(() => {});
     });
     try {
-      await fixture.sendComment();
+      await fixture.send.click();
       await expect.poll(() => accepted).toBe(true);
       expect(await fixture.comments()).toHaveLength(1);
       await fixture.editor.fill("A newer draft written while delivery was pending.");
@@ -364,7 +347,7 @@ for (const classic of [false, true]) {
       expect(await fixture.comments()).toHaveLength(1);
       expect(acceptedRequestId).toEqual(expect.any(String));
       expect((await fixture.comments())[0]!.clientRequestId).toBe(acceptedRequestId);
-      await fixture.sendComment();
+      await fixture.send.click();
       await expect.poll(async () => (await fixture.comments()).length).toBe(2);
       expect(attempts).toBe(2);
       expect((await fixture.comments()).map((comment) => comment.body).sort()).toEqual([
@@ -422,7 +405,7 @@ for (const classic of [false, true])
           req.method() === "POST" &&
           new URL(req.url()).pathname.endsWith("/comments"),
       );
-      await fixture.sendComment();
+      await fixture.send.click();
       expect((await outbound).postDataJSON().attachmentIds).toBeUndefined();
       await expect.poll(async () => (await fixture.comments()).length).toBe(1);
       expect((await fixture.comments())[0]!.body).not.toContain(
@@ -460,7 +443,7 @@ test("legacy failed upload can be removed before sending the retained text", asy
   });
   await expect(remove).toBeVisible();
   await remove.click();
-  await fixture.sendComment();
+  await fixture.send.click();
   await expect.poll(async () => (await fixture.comments()).length).toBe(1);
   expect((await fixture.comments())[0]!.body).toBe(
     "Keep this text after removing the failed file.",

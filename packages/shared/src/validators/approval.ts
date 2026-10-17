@@ -2,6 +2,20 @@ import { z } from "zod";
 import { APPROVAL_TYPES } from "../constants.js";
 import { multilineTextSchema } from "./text.js";
 
+export const fileMutationPayloadSchema = z.object({
+  callId: z.string().optional(),
+  issueId: z.string().guid().nullable().optional(),
+  workspaceId: z.string().nullable().optional(),
+  relativePath: z.string().min(1),
+  operation: z.enum(["create", "modify", "delete"]),
+  baseSha256: z.string().nullable().optional(),
+  stagedSha256: z.string().min(1),
+  stagedPath: z.string().min(1),
+  diff: z.string().optional(),
+});
+
+export type FileMutationPayload = z.infer<typeof fileMutationPayloadSchema>;
+
 export const createApprovalSchema = z.object({
   type: z.enum(APPROVAL_TYPES),
   requestedByAgentId: z.string().guid().optional().nullable(),

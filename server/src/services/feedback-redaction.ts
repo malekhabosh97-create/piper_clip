@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { looksLikeCredentialJwt } from "@paperclipai/adapter-utils/command-redaction";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { sanitizeRecord } from "../redaction.js";
 
@@ -35,7 +34,7 @@ const FREE_TEXT_PATTERNS: RedactionPattern[] = [
   },
   {
     kind: "bearer_token",
-    regex: /\bBearer\s+(?!(?:tokens?|authentication|authorization|credentials?|schemes?|flows?)[.,;:!?]?(?:\s|[)\]}]|$))[A-Za-z0-9._~+/-]+=*/gi,
+    regex: /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi,
     replacement: "Bearer [REDACTED_TOKEN]",
   },
   {
@@ -50,8 +49,8 @@ const FREE_TEXT_PATTERNS: RedactionPattern[] = [
   },
   {
     kind: "jwt",
-    regex: /\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g,
-    replacement: (match) => looksLikeCredentialJwt(match) ? "[REDACTED_JWT]" : match,
+    regex: /\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?\b/g,
+    replacement: "[REDACTED_JWT]",
   },
   {
     kind: "dsn",
@@ -85,14 +84,12 @@ function recordField(state: FeedbackRedactionState, fieldPath: string) {
 }
 
 function applyPattern(input: string, pattern: RedactionPattern) {
-  let matches = 0;
-  const output = input.replace(pattern.regex, (match: string, ...args: string[]) => {
-    const replacement = typeof pattern.replacement === "function"
-      ? pattern.replacement(match, ...args)
-      : pattern.replacement;
-    if (replacement !== match) matches += 1;
-    return replacement;
-  });
+  const matches = Array.from(input.matchAll(pattern.regex)).length;
+  if (matches === 0) {
+    pattern.regex.lastIndex = 0;
+    return { output: input, matches: 0 };
+  }
+  const output = input.replace(pattern.regex, pattern.replacement as never);
   pattern.regex.lastIndex = 0;
   return { output, matches };
 }

@@ -2177,10 +2177,8 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
         starterAssigneeValue ? parseAssigneeValue(starterAssigneeValue) : activeConversationIssue ?? {},
         conversationComments,
         currentUserId,
-        undefined,
-        conversationActivity,
       ),
-    [activeConversationIssue, conversationComments, currentUserId, starterAssigneeValue, conversationActivity],
+    [activeConversationIssue, conversationComments, currentUserId, starterAssigneeValue],
   );
   const conversationRunningRun = useMemo(
     () => resolveRunningPipelineConversationRun(resolvedConversationActiveRun, resolvedConversationLiveRuns),

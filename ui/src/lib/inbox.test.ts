@@ -18,6 +18,7 @@ import {
   buildInboxKeyboardNavEntries,
   buildInboxDismissedAtByKey,
   computeInboxBadgeData,
+  filterInboxIssues,
   getArchivedInboxSearchIssues,
   getAvailableInboxIssueColumns,
   getInboxWorkItemKey,
@@ -942,7 +943,7 @@ describe("inbox helpers", () => {
           workspaces: [],
           liveOnly: false,
           externalObjectStatuses: [],
-          showAgentCreatedTasks: false,
+          hideRoutineExecutions: true,
         },
       }).map((issue) => issue.id),
     ).toEqual(["remote-match"]);
@@ -963,7 +964,7 @@ describe("inbox helpers", () => {
           workspaces: [],
           liveOnly: false,
           externalObjectStatuses: [],
-          showAgentCreatedTasks: false,
+          hideRoutineExecutions: true,
         },
       }),
     ).toEqual([]);
@@ -984,7 +985,7 @@ describe("inbox helpers", () => {
           workspaces: [],
           liveOnly: false,
           externalObjectStatuses: [],
-          showAgentCreatedTasks: false,
+          hideRoutineExecutions: true,
         },
       }),
     ).toEqual([]);
@@ -1032,7 +1033,7 @@ describe("inbox helpers", () => {
           workspaces: [],
           liveOnly: false,
           externalObjectStatuses: ["failed"],
-          showAgentCreatedTasks: false,
+          hideRoutineExecutions: true,
         },
         issueFilterContext: {
           externalObjectSummaryByIssueId: summaries,
@@ -1128,7 +1129,7 @@ describe("inbox helpers", () => {
         workspaces: ["workspace-1"],
         liveOnly: true,
         externalObjectStatuses: [],
-        showAgentCreatedTasks: true,
+        hideRoutineExecutions: false,
       },
     });
     saveInboxFilterPreferences("company-2", {
@@ -1144,7 +1145,7 @@ describe("inbox helpers", () => {
         workspaces: [],
         liveOnly: false,
         externalObjectStatuses: [],
-        showAgentCreatedTasks: false,
+        hideRoutineExecutions: true,
       },
     });
 
@@ -1158,10 +1159,10 @@ describe("inbox helpers", () => {
         creators: ["user:user-1"],
         labels: ["label-1"],
         projects: ["project-1"],
-        workspaces: [],
+        workspaces: ["workspace-1"],
         liveOnly: true,
         externalObjectStatuses: [],
-        showAgentCreatedTasks: true,
+        hideRoutineExecutions: false,
       },
     });
     expect(loadInboxFilterPreferences("company-2")).toEqual({
@@ -1177,7 +1178,7 @@ describe("inbox helpers", () => {
         workspaces: [],
         liveOnly: false,
         externalObjectStatuses: [],
-        showAgentCreatedTasks: false,
+        hideRoutineExecutions: true,
       },
     });
   });
@@ -1195,7 +1196,7 @@ describe("inbox helpers", () => {
         projects: ["project-1"],
         workspaces: ["workspace-1", false],
         liveOnly: "yes",
-        showAgentCreatedTasks: "yes",
+        hideRoutineExecutions: "yes",
       },
     }));
 
@@ -1209,10 +1210,10 @@ describe("inbox helpers", () => {
         creators: ["user:user-1"],
         labels: [],
         projects: ["project-1"],
-        workspaces: [],
+        workspaces: ["workspace-1"],
         liveOnly: false,
         externalObjectStatuses: [],
-        showAgentCreatedTasks: false,
+        hideRoutineExecutions: false,
       },
     });
   });
@@ -1376,6 +1377,13 @@ describe("inbox helpers", () => {
     expect(getInboxKeyboardSelectionIndex(0, 3, "previous")).toBe(0);
   });
 
+  it("hides routine execution issues when the hide toggle is enabled", () => {
+    const manualIssue = { ...makeIssue("manual", true), originKind: "manual" as const };
+    const routineIssue = { ...makeIssue("routine", true), originKind: "routine_execution" as const };
+
+    expect(filterInboxIssues([manualIssue, routineIssue], false)).toEqual([manualIssue, routineIssue]);
+    expect(filterInboxIssues([manualIssue, routineIssue], true)).toEqual([manualIssue]);
+  });
 
   it("groups mixed inbox items by type while preserving item order within each group", () => {
     const items: InboxWorkItem[] = [

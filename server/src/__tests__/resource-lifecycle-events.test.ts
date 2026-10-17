@@ -1,4 +1,3 @@
-import { createAgentLifecycle, configureAgentLifecycle } from "../services/agent-lifecycle.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
@@ -23,29 +22,23 @@ describePostgres("Resource lifecycle events", () => {
   let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
   let db: Db;
   let companyId: string;
-  let worker: ReturnType<typeof configureAgentLifecycle>;
 
   beforeAll(async () => {
     database = await startEmbeddedPostgresTestDatabase("paperclip-resource-events-");
     db = createDb(database.connectionString);
   }, 90_000);
-  afterAll(async () => { await worker?.stop(); await database?.cleanup(); });
+  afterAll(async () => { await database?.cleanup(); });
   beforeEach(async () => {
     vi.stubEnv("PAPERCLIP_MANAGED_CONFIG", undefined);
     vi.stubEnv("PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN", undefined);
-    await worker?.stop();
-    worker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete", runHost: async () => "complete" });
     companyId = randomUUID();
     await db.insert(companies).values({ id: companyId, name: "Lifecycle fixture", issuePrefix: `L${companyId.replaceAll("-", "").slice(0, 6)}` });
   });
   afterEach(() => { vi.unstubAllEnvs(); });
 
   const events = () => db.select().from(resourceLifecycleEvents).where(eq(resourceLifecycleEvents.companyId, companyId));
-  const createAgent = async (status: "idle" | "pending_approval" | "terminated" = "idle", database: Db = db) => {
-    const agent = await createAgentLifecycle(database).requestHire(companyId, { name: "Lifecycle agent", adapterType: "process", adapterConfig: {}, status });
-    await worker.process(agent.id);
-    return (await agentService(db).getById(agent.id))!;
-  };
+  const createAgent = (status: "idle" | "pending_approval" | "terminated" = "idle", database: Db = db) =>
+    agentService(database).create(companyId, { name: "Lifecycle agent", adapterType: "process", adapterConfig: {}, status });
   const createPlugin = async () => {
     const [plugin] = await db.insert(plugins).values({ pluginKey: randomUUID(), packageName: "lifecycle-fixture", version: "1.0.0", status: "ready", manifestJson: {} as never }).returning();
     return plugin;
@@ -53,7 +46,7 @@ describePostgres("Resource lifecycle events", () => {
 
   it("records direct and approval-free hires once, including concurrent duplicate submissions", async () => {
     const agent = await createAgent();
-    await Promise.all(Array.from({ length: 5 }, () => db.transaction(tx => recordResourceCreationEvent(tx as unknown as Db, companyId, "agent", agent.id))));
+    await Promise.all(Array.from({ length: 5 }, () => recordResourceCreationEvent(db, companyId, "agent", agent.id)));
     expect(await events()).toEqual([expect.objectContaining({ resourceType: "agent", resourceId: agent.id, action: "create" })]);
   });
 
@@ -63,7 +56,7 @@ describePostgres("Resource lifecycle events", () => {
     const approval = await approvalService(db).create(companyId, { type: "hire_agent", status: "pending", payload: { agentId: agent.id } });
     await approvalService(db).approve(approval.id, "fixture-board");
     await approvalService(db).approve(approval.id, "fixture-board");
-    await createAgentLifecycle(db).approveHire(agent.id);
+    await agentService(db).activatePendingApproval(agent.id);
     expect(await events()).toEqual([expect.objectContaining({ resourceType: "agent", resourceId: agent.id })]);
   });
 
@@ -71,7 +64,6 @@ describePostgres("Resource lifecycle events", () => {
     const approval = await approvalService(db).create(companyId, { type: "hire_agent", status: "pending", payload: { name: "Legacy hire", adapterType: "process" } });
     await approvalService(db).approve(approval.id, "fixture-board");
     const [intent] = await events();
-    if (intent) await worker.process(intent.resourceId);
     expect(intent?.resourceType).toBe("agent");
     expect(await agentService(db).getById(intent!.resourceId)).toMatchObject({ status: "idle", companyId });
   });
@@ -119,32 +111,25 @@ describePostgres("Resource lifecycle events", () => {
   it("records every pause/resume cycle and termination in resource order, without duplicate hooks", async () => {
     const agent = await createAgent();
     const service = agentService(db);
-  const serviceLifecycle = createAgentLifecycle(db);
     await db.insert(agentApiKeys).values({ agentId: agent.id, companyId, name: "Lifecycle key", keyHash: "fixture-hash" });
-    await Promise.all(Array.from({ length: 4 }, () => serviceLifecycle.pauseAgent(agent.id)));
-    await worker.process(agent.id);
-    await Promise.all(Array.from({ length: 4 }, () => serviceLifecycle.resumeAgent(agent.id)));
-    await worker.process(agent.id);
-    await serviceLifecycle.pauseAgent(agent.id);
-    await worker.process(agent.id);
-    await worker.process(agent.id);
-    await serviceLifecycle.resumeAgent(agent.id);
-    await worker.process(agent.id);
-    await worker.process(agent.id);
-    await Promise.all(Array.from({ length: 4 }, () => serviceLifecycle.terminateAgent(agent.id)));
+    await Promise.all(Array.from({ length: 4 }, () => service.pause(agent.id)));
+    await Promise.all(Array.from({ length: 4 }, () => service.resume(agent.id)));
+    await service.update(agent.id, { status: "paused" });
+    await service.update(agent.id, { status: "idle" });
+    await Promise.all(Array.from({ length: 4 }, () => service.terminate(agent.id)));
     const rows = (await events()).sort((a, b) => a.id - b.id);
     expect(rows.map(row => row.action)).toEqual(["create", "pause", "resume", "pause", "resume", "terminate"]);
     expect(rows.every(row => row.resourceId === agent.id)).toBe(true);
     const [key] = await db.select().from(agentApiKeys).where(eq(agentApiKeys.agentId, agent.id));
     expect(key.revokedAt).not.toBeNull();
-    await expect(serviceLifecycle.pauseAgent(agent.id)).rejects.toMatchObject({ name: "AgentLifecycleConflict" });
-    await expect(serviceLifecycle.resumeAgent(agent.id)).rejects.toMatchObject({ name: "AgentLifecycleConflict" });
+    await expect(service.pause(agent.id)).rejects.toMatchObject({ status: 409 });
+    await expect(service.resume(agent.id)).rejects.toMatchObject({ status: 409 });
   });
 
   it("does not bypass pending hire approval with pause or resume", async () => {
     const agent = await createAgent("pending_approval");
-    await expect(createAgentLifecycle(db).pauseAgent(agent.id)).rejects.toMatchObject({ name: "AgentLifecycleConflict" });
-    await expect(createAgentLifecycle(db).resumeAgent(agent.id)).rejects.toMatchObject({ name: "AgentLifecycleConflict" });
+    await expect(agentService(db).pause(agent.id)).rejects.toMatchObject({ status: 409 });
+    await expect(agentService(db).resume(agent.id)).rejects.toMatchObject({ status: 409 });
     expect(await events()).toEqual([]);
   });
 
@@ -157,7 +142,6 @@ describePostgres("Resource lifecycle events", () => {
     await service.evaluateCostEvent(event);
     expect(await agentService(db).getById(agent.id)).toMatchObject({ status: "paused", pauseReason: "budget" });
     await service.upsertPolicy(companyId, { scopeType: "agent", scopeId: agent.id, amount: 200 }, "fixture-board");
-    await worker.process(agent.id);
     expect(await agentService(db).getById(agent.id)).toMatchObject({ status: "idle", pauseReason: null });
     expect((await events()).sort((a, b) => a.id - b.id).map(row => row.action)).toEqual(["create", "pause", "resume"]);
   });
@@ -165,15 +149,14 @@ describePostgres("Resource lifecycle events", () => {
   it("rolls back pause, resume, termination, and key revocation if a hook write fails", async () => {
     const agent = await createAgent();
     const paused = await createAgent();
-    await createAgentLifecycle(db).pauseAgent(paused.id);
-    await worker.process(paused.id);
+    await agentService(db).pause(paused.id);
     await db.insert(agentApiKeys).values({ agentId: agent.id, companyId, name: "Retained key", keyHash: "fixture-retained-hash" });
     const before = await events();
     await db.execute(sql`ALTER TABLE resource_lifecycle_events ADD CONSTRAINT fixture_reject_hook CHECK (false) NOT VALID`);
     try {
-      await expect(createAgentLifecycle(db).pauseAgent(agent.id)).rejects.toThrow();
-      await expect(createAgentLifecycle(db).resumeAgent(paused.id)).rejects.toThrow();
-      await expect(createAgentLifecycle(db).terminateAgent(agent.id)).rejects.toThrow();
+      await expect(agentService(db).pause(agent.id)).rejects.toThrow();
+      await expect(agentService(db).resume(paused.id)).rejects.toThrow();
+      await expect(agentService(db).terminate(agent.id)).rejects.toThrow();
       expect(await agentService(db).getById(agent.id)).toMatchObject({ status: "idle" });
       expect(await agentService(db).getById(paused.id)).toMatchObject({ status: "paused" });
       const [key] = await db.select().from(agentApiKeys).where(eq(agentApiKeys.agentId, agent.id));
@@ -189,8 +172,7 @@ describePostgres("Resource lifecycle events", () => {
     const projectId = randomUUID();
     await expect(db.transaction(async tx => {
       const txDb = tx as unknown as Db;
-      await tx.insert(agents).values({ id: agentId, companyId, name: "Rolled back agent" });
-      await recordResourceCreationEvent(txDb, companyId, "agent", agentId);
+      await agentService(txDb).create(companyId, { id: agentId, name: "Rolled back agent" });
       await projectService(txDb).createWithRepositories(companyId, { id: projectId, name: "Rolled back project" }, []);
       throw new Error("rollback fixture");
     })).rejects.toThrow("rollback fixture");
@@ -235,11 +217,11 @@ describePostgres("Resource lifecycle events", () => {
     vi.stubEnv("PAPERCLIP_MANAGED_CONFIG", undefined);
     vi.stubEnv("PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN", "fixture-token");
     const id = randomUUID();
-    await db.transaction(tx => recordResourceCreationEvent(tx as unknown as Db, companyId, "agent", id));
-    await db.transaction(tx => recordResourceCreationEvent(tx as unknown as Db, companyId, "project", id));
+    await recordResourceCreationEvent(db, companyId, "agent", id);
+    await recordResourceCreationEvent(db, companyId, "project", id);
     const otherCompanyId = randomUUID();
     await db.insert(companies).values({ id: otherCompanyId, name: "Other company", issuePrefix: "OTHER" });
-    await db.transaction(tx => recordResourceCreationEvent(tx as unknown as Db, otherCompanyId, "agent", id));
+    await recordResourceCreationEvent(db, otherCompanyId, "agent", id);
     expect(await events()).toHaveLength(2);
     expect(await db.select().from(resourceLifecycleEvents).where(eq(resourceLifecycleEvents.companyId, otherCompanyId))).toHaveLength(1);
     await db.delete(companies).where(eq(companies.id, otherCompanyId));
@@ -265,23 +247,6 @@ describePostgres("Resource lifecycle events", () => {
     const beforeArchive = await events();
     expect((await service.getById(project.id))?.workspaces).toHaveLength(2);
     expect(beforeArchive.sort((a, b) => a.id - b.id).map(row => row.action)).toEqual(["create", "update", "update", "update", "update", "update"]);
-  });
-
-  it("records deletion atomically and retains the event after removing the project", async () => {
-    const service = projectService(db);
-    const project = await service.create(companyId, { name: "Delete fixture" });
-    await db.execute(sql`ALTER TABLE resource_lifecycle_events ADD CONSTRAINT fixture_reject_delete CHECK (action <> 'delete') NOT VALID`);
-    try {
-      await expect(service.remove(project.id)).rejects.toThrow();
-      expect(await service.getById(project.id)).not.toBeNull();
-      expect((await events()).map(row => row.action)).toEqual(["create"]);
-    } finally {
-      await db.execute(sql`ALTER TABLE resource_lifecycle_events DROP CONSTRAINT fixture_reject_delete`);
-    }
-    await service.remove(project.id);
-    await service.remove(project.id);
-    expect(await service.getById(project.id)).toBeNull();
-    expect((await events()).map(row => row.action)).toEqual(["create", "delete"]);
   });
 
   it("records archive once per transition and update on restore, retaining repositories", async () => {
@@ -422,10 +387,8 @@ describePostgres("Resource lifecycle events", () => {
     const first = await createPlugin();
     const second = await createPlugin();
     const agent = await createAgent();
-    await createAgentLifecycle(db).pauseAgent(agent.id);
-    await worker.process(agent.id);
-    await createAgentLifecycle(db).resumeAgent(agent.id);
-    await worker.process(agent.id);
+    await agentService(db).pause(agent.id);
+    await agentService(db).resume(agent.id);
     const journal = (await events()).sort((a, b) => a.id - b.id);
     const inbox = pluginLifecycleInbox(db, first.id);
     const [event] = await inbox.list(companyId);
@@ -463,8 +426,7 @@ describePostgres("Resource lifecycle events", () => {
     const plugin = await createPlugin();
     const inbox = pluginLifecycleInbox(db, plugin.id);
     await db.transaction(async tx => {
-      const [low] = await tx.insert(agents).values({ companyId, name: "Delayed commit" }).returning();
-      await recordResourceCreationEvent(tx as unknown as Db, companyId, "agent", low.id);
+      const low = await agentService(tx as unknown as Db).create(companyId, { name: "Delayed commit" });
       const high = await createAgent();
       const [visible] = await inbox.list(companyId);
       expect(visible.resourceId).toBe(high.id);

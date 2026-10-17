@@ -1,4 +1,3 @@
-import { notifyDeliveryWork, DELIVERY_QUEUES } from "./delivery-work-notifications.js";
 import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
 import { agents, agentWakeupRequests, chatCompletionDeliveries as deliveries, chatTaskHandoffs as handoffs,
   heartbeatRuns, issueComments, issueDocuments, issues, type Db } from "@paperclipai/db";
@@ -32,16 +31,13 @@ export async function recordChatHandoff(tx: Connection, task: Issue, actorRunId:
 }
 
 /** Must run on the same transaction as status projection (including native arbitration). */
-export async function recordChatCompletion(tx: Connection, before: Issue, after: Issue): Promise<boolean> {
-  if (before.status === after.status) return false;
+export async function recordChatCompletion(tx: Connection, before: Issue, after: Issue) {
+  if (before.status === after.status) return;
   await tx.update(deliveries).set({ status: "superseded" }).where(and(eq(deliveries.taskId, after.id),
     eq(deliveries.companyId, after.companyId), inArray(deliveries.status, [...pending])));
-  if (after.status !== "done") return false;
+  if (after.status !== "done") return;
   const [handoff] = await tx.select().from(handoffs).where(and(eq(handoffs.taskId, after.id), eq(handoffs.companyId, after.companyId)));
-  if (!handoff) return false;
-  await notifyDeliveryWork(tx, DELIVERY_QUEUES.chatCompletion);
-  await tx.insert(deliveries).values({ companyId: after.companyId, taskId: after.id, statusVersion: after.statusVersion }).onConflictDoNothing();
-  return true;
+  if (handoff) await tx.insert(deliveries).values({ companyId: after.companyId, taskId: after.id, statusVersion: after.statusVersion }).onConflictDoNothing();
 }
 
 async function loadAudience(tx: Connection, deliveryId: string) {
@@ -247,9 +243,5 @@ export function chatCompletionDeliveryService(db: Db, heartbeat: { wakeup(agentI
       .orderBy(asc(deliveries.nextAttemptAt)).limit(100);
     for (const row of due) await deliver(row.id);
   }
-  async function hasPending() {
-    return (await db.select({ id: deliveries.id }).from(deliveries)
-      .where(inArray(deliveries.status, [...pending])).limit(1)).length > 0;
-  }
-  return { deliver, sweepPending, hasPending };
+  return { deliver, sweepPending };
 }

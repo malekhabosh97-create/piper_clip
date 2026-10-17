@@ -1,8 +1,7 @@
-import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, authUsers, companies, companyMemberships, createDb, heartbeatRuns, issues } from "@paperclipai/db";
+import { agents, companies, createDb, heartbeatRuns, issues } from "@paperclipai/db";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { heartbeatService } from "../services/heartbeat.js";
 
@@ -20,7 +19,7 @@ suite("native terminal-run cleanup admission", () => {
   beforeAll(async () => {
     temporary = await startEmbeddedPostgresTestDatabase("native-cleanup-admission-");
     db = createDb(temporary.connectionString);
-  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
+  }, 60_000);
   afterAll(async () => {
     await db?.$client.end({ timeout: 0 });
     await temporary?.cleanup();
@@ -29,8 +28,6 @@ suite("native terminal-run cleanup admission", () => {
   it("holds the same task until its native executor settles while allowing unrelated tasks", async () => {
     const companyId = randomUUID(), agentId = randomUUID(), issueId = randomUUID(), otherIssueId = randomUUID();
     await db.insert(companies).values({ id: companyId, name: "Cleanup admission", issuePrefix: "CLN", defaultResponsibleUserId: "owner" });
-    await db.insert(authUsers).values({ id: "owner", name: "Fixture user", email: "owner@example.test", createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "owner", status: "active", membershipRole: "member" });
     await db.insert(agents).values({ id: agentId, companyId, name: "Worker", role: "engineer", status: "idle", adapterType: "process",
       adapterConfig: {}, permissions: {}, runtimeConfig: { heartbeat: { enabled: false, wakeOnDemand: true, maxConcurrentRuns: 20 } } });
     await db.insert(issues).values([issueId, otherIssueId].map(id => ({ id, companyId, title: "Recovery task", status: "todo", assigneeAgentId: agentId, responsibleUserId: "owner" })));

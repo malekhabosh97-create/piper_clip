@@ -1,4 +1,3 @@
-import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
 import { createHash } from "node:crypto";
 import { adoptAgentFiles, agentFileToken } from "./agent-file-store.js";
 import { and, desc, eq, getTableColumns, lt, or, sql } from "drizzle-orm";
@@ -253,15 +252,19 @@ export function agentInstructionRevisionService(db: Db) {
           !state.agent.adapterConfig.instructionsBundleMode ||
           (bound.type === "plugin" && configuredEntryFile !== input.entryFile)
         ) {
-          await updateAgentConfigurationInTransaction(tx as unknown as Db, state.agent.id, {
-            adapterConfig: {
-              ...state.agent.adapterConfig,
-              instructionsBundleMode: "managed",
-              instructionsRootPath: state.root,
-              instructionsEntryFile: state.entryFile,
-              instructionsFilePath: `${state.root}/${state.entryFile}`,
-            },
-          }, { allowPendingApprovalConfigUpdate: true });
+          await tx
+            .update(agents)
+            .set({
+              adapterConfig: {
+                ...state.agent.adapterConfig,
+                instructionsBundleMode: "managed",
+                instructionsRootPath: state.root,
+                instructionsEntryFile: state.entryFile,
+                instructionsFilePath: `${state.root}/${state.entryFile}`,
+              },
+              updatedAt: new Date(),
+            })
+            .where(eq(agents.id, state.agent.id));
         }
       };
       // An exact replay can safely return the durable receipt even after its base

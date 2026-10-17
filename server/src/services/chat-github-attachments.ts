@@ -38,20 +38,15 @@ const MIME_EXTENSIONS: Record<string, string> = {
   "audio/mpeg": ".mp3",
 };
 
-type GitHubAttachmentSourceKind = "issue_description" | "pull_request_description" | "review_summary";
-const BODY_SOURCE_KINDS: GitHubAttachmentSourceKind[] = ["issue_description", "pull_request_description", "review_summary"];
-
-/** Provenance is the admitted source, not ownership of GitHub's anonymized upload. */
+/** Provenance is the admitted comment, not ownership of GitHub's anonymized upload. */
 export interface GitHubPublicAttachmentLocator {
   kind: "github_public_attachment";
   url: string;
   sourceThreadId: string;
   sourceMessageId: string;
   /** Old four-field descriptors remain anonymous-only. */
-  version?: 2 | 3;
+  version?: 2;
   sourceBodySha256?: string;
-  sourceKind?: GitHubAttachmentSourceKind;
-  sourceId?: string;
 }
 
 export interface GitHubAttachmentCommentRequest {
@@ -67,15 +62,14 @@ export function isGitHubAttachmentCommentRequest(
   request: GitHubAttachmentCommentRequest,
 ): boolean {
   const match =
-    /^https:\/\/api\.github\.com\/repos\/[a-z0-9][a-z0-9-]{0,38}\/([a-z0-9_.-]{1,100})\/(issues|pulls)\/(comments\/[1-9][0-9]{0,24}|[1-9][0-9]{0,24}(?:\/reviews\/[1-9][0-9]{0,24})?)$/i.exec(
+    /^https:\/\/api\.github\.com\/repos\/[a-z0-9][a-z0-9-]{0,38}\/([a-z0-9_.-]{1,100})\/(issues|pulls)\/comments\/[1-9][0-9]{0,24}$/i.exec(
       request.url,
     );
   return Boolean(
     match &&
     ![".", ".."].includes(match[1]!) &&
-    !(match[2] === "issues" && match[3]!.includes("/reviews/")) &&
     request.accept ===
-      (match[2] === "pulls" && (match[3]!.startsWith("comments/") || match[3]!.includes("/reviews/"))
+      (match[2] === "pulls"
         ? "application/vnd.github-commitcomment.full+json"
         : "application/vnd.github.full+json"),
   );
@@ -205,22 +199,15 @@ export function validateGitHubAttachmentLocator(
     ![
       "kind,sourceMessageId,sourceThreadId,url",
       "kind,sourceBodySha256,sourceMessageId,sourceThreadId,url,version",
-      "kind,sourceBodySha256,sourceId,sourceKind,sourceMessageId,sourceThreadId,url,version",
     ].includes(Object.keys(row).sort().join(",")) ||
     (("version" in row || "sourceBodySha256" in row) &&
-      (![2, 3].includes(row.version as number) ||
+      (row.version !== 2 ||
         typeof row.sourceBodySha256 !== "string" ||
         !/^[a-f0-9]{64}$/.test(row.sourceBodySha256))) ||
     row.kind !== "github_public_attachment" ||
-    (row.version !== 3 && ("sourceKind" in row || "sourceId" in row)) ||
     !validThread(row.sourceThreadId) ||
     typeof row.sourceMessageId !== "string" ||
-    !(row.version === 3
-      ? typeof row.sourceId === "string" && /^[1-9][0-9]{0,24}$/.test(row.sourceId) &&
-        BODY_SOURCE_KINDS.includes(row.sourceKind as GitHubAttachmentSourceKind) &&
-        (/^mention-event:[a-z0-9_-]{1,200}$/i.test(row.sourceMessageId) ||
-          (row.sourceKind === "review_summary" && row.sourceMessageId === `review:${row.sourceId}`))
-      : /^[1-9][0-9]{0,24}$/.test(row.sourceMessageId))
+    !/^[1-9][0-9]{0,24}$/.test(row.sourceMessageId)
   )
     return null;
   const url = canonicalGitHubAttachmentUrl(row.url);
@@ -230,11 +217,10 @@ export function validateGitHubAttachmentLocator(
         url,
         sourceThreadId: row.sourceThreadId,
         sourceMessageId: row.sourceMessageId,
-        ...(row.version === 2 || row.version === 3
+        ...(row.version === 2
           ? {
-              version: row.version,
+              version: 2 as const,
               sourceBodySha256: row.sourceBodySha256 as string,
-              ...(row.version === 3 ? { sourceKind: row.sourceKind as GitHubAttachmentSourceKind, sourceId: row.sourceId as string } : {}),
             }
           : {}),
       }
@@ -292,18 +278,16 @@ export function githubPublicAttachmentsFromMessage(
   const raw = message.raw as Record<string, unknown> | null;
   if (
     !raw ||
-    !validThread(message.threadId)
+    !validThread(message.threadId) ||
+    !/^[1-9][0-9]{0,24}$/.test(message.id)
   )
     return [];
-  const bodySource = BODY_SOURCE_KINDS.includes(raw.type as GitHubAttachmentSourceKind);
-  const comment = (bodySource ? raw.source : raw.comment) as Record<string, unknown> | undefined;
+  const comment = raw.comment as Record<string, unknown> | undefined;
   const repository = raw.repository as Record<string, unknown> | undefined;
   if (
     !comment ||
     !repository ||
-    !/^[1-9][0-9]{0,24}$/.test(String(comment.id)) ||
-    (typeof comment.id === "number" && !Number.isSafeInteger(comment.id)) ||
-    (!bodySource && String(comment.id) !== message.id) ||
+    String(comment.id) !== message.id ||
     typeof comment.body !== "string" ||
     comment.body.length > 200_000
   )
@@ -319,10 +303,7 @@ export function githubPublicAttachmentsFromMessage(
     Number(thread[3]) !== raw.prNumber
   )
     return [];
-  if (bodySource) {
-    if (thread[4] || Boolean(thread[2]) !== (raw.type === "issue_description") ||
-        (raw.type !== "review_summary" && comment.number !== Number(thread[3]))) return [];
-  } else if (raw.type === "review_comment") {
+  if (raw.type === "review_comment") {
     if (thread[2] || thread[4] !== String(comment.in_reply_to_id ?? comment.id))
       return [];
   } else if (
@@ -382,9 +363,8 @@ export function githubPublicAttachmentsFromMessage(
           url,
           sourceThreadId: message.threadId,
           sourceMessageId: message.id,
-          version: bodySource ? 3 : 2,
+          version: 2,
           sourceBodySha256,
-          ...(bodySource ? { sourceKind: raw.type, sourceId: String(comment.id) } : {}),
         },
         { threadId: message.threadId, messageId: message.id },
       )!,
@@ -413,12 +393,12 @@ function allowedRedirect(value: string, original: string): URL | null {
   }
 }
 
-/** Exact documented source route; no caller-supplied API origin or query. */
+/** Exact documented comment route; no caller-supplied API origin or query. */
 export function githubAttachmentCommentRequest(
   attachment: Attachment,
 ): GitHubAttachmentCommentRequest | null {
   const locator = handles.get(attachment);
-  if (![2, 3].includes(locator?.version ?? 0) || !locator?.sourceBodySha256) return null;
+  if (locator?.version !== 2 || !locator.sourceBodySha256) return null;
   const thread =
     /^github:([^/:]+)\/([^:]+):(?:(issue):)?([1-9][0-9]*)(?::rc:([1-9][0-9]*))?$/i.exec(
       locator.sourceThreadId,
@@ -430,13 +410,6 @@ export function githubAttachmentCommentRequest(
     [".", ".."].includes(thread[2]!)
   )
     return null;
-  if (locator.version === 3) {
-    if (thread[5] || Boolean(thread[3]) !== (locator.sourceKind === "issue_description")) return null;
-    return {
-      url: `https://api.github.com/repos/${thread[1]}/${thread[2]}/${thread[3] ? "issues" : "pulls"}/${thread[4]}${locator.sourceKind === "review_summary" ? `/reviews/${locator.sourceId}` : ""}`,
-      accept: locator.sourceKind === "review_summary" ? "application/vnd.github-commitcomment.full+json" : "application/vnd.github.full+json",
-    };
-  }
   return {
     url: `https://api.github.com/repos/${thread[1]}/${thread[2]}/${thread[5] ? "pulls" : "issues"}/comments/${locator.sourceMessageId}`,
     accept: thread[5]
@@ -579,9 +552,9 @@ function resolveCanonicalAttachmentTargetOrThrow(
       locator.sourceThreadId,
     )!;
   if (
-    String(row.id) !== (locator.sourceId ?? locator.sourceMessageId) ||
-    (locator.sourceKind === "review_summary" && row.url === undefined ? false :
-      typeof row.url !== "string" || row.url.toLowerCase() !== request.url.toLowerCase())
+    String(row.id) !== locator.sourceMessageId ||
+    typeof row.url !== "string" ||
+    row.url.toLowerCase() !== request.url.toLowerCase()
   )
     throw new GitHubAttachmentUnavailableError(
       "github_attachment_canonical_source_mismatch",
@@ -599,12 +572,7 @@ function resolveCanonicalAttachmentTargetOrThrow(
     throw new GitHubAttachmentUnavailableError(
       "github_attachment_canonical_html_unavailable",
     );
-  if (locator.version === 3) {
-    if (locator.sourceKind === "review_summary" ? row.pull_request_url !==
-        `https://api.github.com/repos/${thread[1]}/pulls/${thread[3]}` :
-        row.number !== Number(thread[3]) || (locator.sourceKind === "issue_description" && row.pull_request !== undefined))
-      throw new GitHubAttachmentUnavailableError("github_attachment_canonical_source_mismatch");
-  } else if (thread[4]) {
+  if (thread[4]) {
     if (
       row.pull_request_url !==
         `https://api.github.com/repos/${thread[1]}/pulls/${thread[3]}` ||

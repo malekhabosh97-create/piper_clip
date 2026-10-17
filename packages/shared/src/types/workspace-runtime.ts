@@ -229,9 +229,9 @@ export interface WorkspaceOverviewItem {
   kind: "execution_workspace";
   workspaceId: string;
   workspaceName: string;
-  projectId: string | null;
-  projectUrlKey: string | null;
-  projectName: string | null;
+  projectId: string;
+  projectUrlKey: string;
+  projectName: string;
   mode: ExecutionWorkspaceSummary["mode"];
   strategyType: ExecutionWorkspaceStrategyType;
   cwd: string | null;
@@ -262,7 +262,7 @@ export interface WorkspaceOverviewResponse {
 export interface ExecutionWorkspace {
   id: string;
   companyId: string;
-  projectId: string | null;
+  projectId: string;
   projectWorkspaceId: string | null;
   sourceIssueId: string | null;
   mode: Exclude<ExecutionWorkspaceMode, "inherit" | "reuse_existing" | "agent_default"> | "adapter_managed" | "cloud_sandbox";

@@ -13,9 +13,7 @@ import {
   agentTaskSessions,
   agentWakeupRequests,
   agents,
-  authUsers,
   companies,
-  companyMemberships,
   companySkills,
   createDb,
   documentRevisions,
@@ -109,17 +107,6 @@ describeEmbeddedPostgres("accepted plan workspace refresh", () => {
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
   const tempRoots: string[] = [];
 
-  async function grantResponsibleUser(companyId: string) {
-    await db.insert(authUsers).values({
-      id: "responsible-user", name: "Responsible user", email: "accepted-plan@example.test",
-      createdAt: new Date(), updatedAt: new Date(),
-    }).onConflictDoNothing();
-    await db.insert(companyMemberships).values({
-      companyId, principalType: "user", principalId: "responsible-user",
-      status: "active", membershipRole: "member",
-    });
-  }
-
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-accepted-plan-workspace-");
     db = createDb(tempDb.connectionString);
@@ -167,7 +154,6 @@ describeEmbeddedPostgres("accepted plan workspace refresh", () => {
     await db.delete(agents);
     await db.delete(workspaceOperations);
     await db.delete(companySkills);
-    await db.delete(companyMemberships);
     await db.delete(companies);
   });
 
@@ -316,7 +302,6 @@ describeEmbeddedPostgres("accepted plan workspace refresh", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    await grantResponsibleUser(companyId);
     await db.insert(projects).values({
       id: projectId,
       companyId,
@@ -491,7 +476,6 @@ describeEmbeddedPostgres("accepted plan workspace refresh", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    await grantResponsibleUser(companyId);
     await db.insert(projects).values({
       id: projectId,
       companyId,
@@ -728,7 +712,6 @@ describeEmbeddedPostgres("accepted plan workspace refresh", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    await grantResponsibleUser(companyId);
     await db.insert(projects).values({
       id: projectId,
       companyId,
@@ -888,7 +871,6 @@ describeEmbeddedPostgres("accepted plan workspace refresh", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    await grantResponsibleUser(companyId);
     await db.insert(projects).values({
       id: projectId,
       companyId,
@@ -1049,7 +1031,6 @@ describeEmbeddedPostgres("accepted plan workspace refresh", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    await grantResponsibleUser(companyId);
     await db.insert(projects).values({
       id: projectId,
       companyId,

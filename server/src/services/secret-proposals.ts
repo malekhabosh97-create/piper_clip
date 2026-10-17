@@ -1,4 +1,3 @@
-import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
 import { withAgentAppearance } from "@paperclipai/shared";
 import { and, count, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -700,7 +699,7 @@ export function createSecretProposalsService(db: Db) {
       }
       adapterConfig[proposal.configPath] = binding;
     }
-    const updated = await updateAgentConfigurationInTransaction(txDb, target.id, { adapterConfig }, {
+    const updated = await agentSvc.update(target.id, { adapterConfig }, {
       recordRevision: { createdByUserId: resolvedByUserId, source: "patch" },
     });
     if (!updated) throw notFound("Target agent not found");
@@ -721,22 +720,18 @@ export function createSecretProposalsService(db: Db) {
     overrides?: { name?: string; description?: string | null; providerConfigId?: string | null };
     assertCanResolve?: (proposal: Proposal, txDb: Db) => Promise<void>;
   }) {
-    const loadForApproval = async (txDb: Db) => {
+    return db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
       const proposal = await requirePending(companyId, proposalId, txDb, true);
       assertNotExpired(proposal);
       await input.assertCanResolve?.(proposal, txDb);
       await assertBindingSnapshotCurrent(proposal, txDb, true);
-      return proposal;
-    };
-    const saved = await db.transaction(async (tx) => {
-      const txDb = tx as unknown as Db;
-      const proposal = await loadForApproval(txDb);
       if (proposal.kind === "secret") {
         const created = await applySecretApproval(txDb, proposal, input);
-        return { kind: "secret" as const, proposal: await markApproved(txDb, proposal, {
+        return markApproved(txDb, proposal, {
           resolvedByUserId: input.resolvedByUserId,
           createdSecretId: created.id,
-        }) };
+        });
       }
 
       let secretId = proposal.secretId;
@@ -762,15 +757,7 @@ export function createSecretProposalsService(db: Db) {
         }
       }
       if (!secretId) throw conflict("Binding proposal has no approved secret");
-      return { kind: "binding" as const, secretId };
-    });
-    if (saved.kind === "secret") return saved.proposal;
-
-    // Keep the approved secret if applying its reference fails.
-    return db.transaction(async tx => {
-      const txDb = tx as unknown as Db;
-      const proposal = await loadForApproval(txDb);
-      const liveSecret = await secretService(txDb).getById(saved.secretId);
+      const liveSecret = await secretService(txDb).getById(secretId);
       if (!liveSecret || liveSecret.companyId !== companyId || liveSecret.status !== "active") {
         throw conflict("Binding proposal secret is not active");
       }

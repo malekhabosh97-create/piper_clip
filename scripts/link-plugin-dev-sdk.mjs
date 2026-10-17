@@ -93,6 +93,14 @@ export function linkSdkInto(packageDir) {
     if (error?.code !== "ENOENT") throw error;
   }
 
-  symlinkSync(relativeSdkDir, linkTarget, "dir");
+  try {
+    if (process.platform === "win32") {
+      symlinkSync(sdkDir, linkTarget, "junction");
+    } else {
+      symlinkSync(relativeSdkDir, linkTarget, "dir");
+    }
+  } catch (err) {
+    console.warn(`Could not link plugin-sdk into ${packageDir}: ${err.message}`);
+  }
   return true;
 }

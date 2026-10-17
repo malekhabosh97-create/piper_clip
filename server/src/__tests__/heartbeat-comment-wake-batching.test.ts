@@ -2,11 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { WebSocketServer } from "ws";
-import { FAST_RESPONSE_AGENT_GUIDANCE } from "@paperclipai/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
-  authUsers,
   agentWakeupRequests,
   chatActions,
   chatConversations,
@@ -218,15 +216,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
   afterEach(() => {
     runningProcesses.clear();
   });
-
-  async function grantFixtureWorkspaceAccess(companyId: string, userIds: string[]) {
-    await db.insert(authUsers).values(userIds.map(id => ({
-      id, name: "Fixture commenter", email: `${id}@example.test`, createdAt: new Date(), updatedAt: new Date(),
-    }))).onConflictDoNothing();
-    await db.insert(companyMemberships).values(userIds.map(principalId => ({
-      companyId, principalId, principalType: "user", status: "active", membershipRole: "member",
-    })));
-  }
 
   async function readGatewayWakePayload(
     payload: Record<string, unknown>,
@@ -515,7 +504,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "user-1"]);
 
       await db.insert(agents).values({
         id: agentId,
@@ -1054,7 +1042,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "user-1"]);
 
       await db.insert(agents).values({
         id: agentId,
@@ -1265,7 +1252,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user"]);
 
       await db.insert(agents).values([
         {
@@ -1704,7 +1690,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "local-cli-user", "external-user"]);
 
       await db.insert(agents).values({
         id: agentId,
@@ -2307,7 +2292,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
             wakeCommentId: sourceComment.id,
             wakeCommentIds: [sourceComment.id],
             paperclipExternalChatExecutionBound: true,
-            paperclipTaskCommunicationGuidance: `## Communication in Slack\nFrozen connection preference.\n\n${FAST_RESPONSE_AGENT_GUIDANCE}`,
+            paperclipTaskCommunicationGuidance: "## Communication in Slack\nFrozen connection preference.",
             paperclipExternalChatQuestionResponse: expect.objectContaining({
               schema: "paperclip.external_chat_question_response.v1",
               interactionId: answered.id,
@@ -2405,7 +2390,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "local-cli-user", "user-1"]);
 
       await db.insert(agents).values({
         id: agentId,
@@ -2999,7 +2983,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "local-cli-user", "user-1"]);
 
       await db.insert(agents).values({
         id: agentId,
@@ -3165,7 +3148,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user"]);
 
       await db.insert(agents).values({
         id: agentId,
@@ -3331,7 +3313,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
         requireBoardApprovalForNewAgents: false,
         defaultResponsibleUserId: "responsible-user",
       });
-      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "user-1"]);
 
       await db.insert(agents).values([
         {

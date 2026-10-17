@@ -660,8 +660,6 @@ export async function resolveEnvironmentDriverConfigForRuntime(
     // but must still resolve the active custom image as prepared runtime
     // configuration and tooling so the test reflects what real agent runs use.
     applyCustomImageTemplate?: boolean;
-    readOnlyCustomImageTemplate?: boolean;
-    onResolvedCustomImageTemplate?: (identity: { id: string; capturedAt: string | null; templateKind: string; bindingField: string }) => void;
   },
 ): Promise<ParsedEnvironmentConfig> {
   const parsed = parseEnvironmentDriverConfig(environment);
@@ -731,8 +729,6 @@ export async function resolveEnvironmentDriverConfigForRuntime(
             // are excluded when the template's source fingerprint is computed,
             // so they must be excluded when re-checking it here.
             secretRefExcludePaths: collectSecretRefPaths(schema),
-            readOnly: context?.readOnlyCustomImageTemplate,
-            onResolvedTemplate: context?.onResolvedCustomImageTemplate,
           })
         : runtimeConfig,
     };

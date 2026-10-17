@@ -196,8 +196,6 @@ async function prepareCodexHelloProbe(input: {
       workspaceRemoteDir: input.cwd,
       installCommand: SANDBOX_INSTALL_COMMAND,
       detectCommand: input.command,
-      // The probe workspace is a throwaway temp dir; never wait on copy-back retries.
-      workspaceRestoreRetryDelaysMs: [],
       assets: [
         {
           key: "home",

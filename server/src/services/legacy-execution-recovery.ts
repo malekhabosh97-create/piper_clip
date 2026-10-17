@@ -1,5 +1,5 @@
 import { hasRequiredWorkspaceRecovery, preserveWorkspaceRestoreRecoveryMetadata, LEGACY_WORKSPACE_RECOVERY_SCHEMA } from "./workspace-restore-recovery-state.js";
-import { hasUnrestoredRemoteWorkspace, preserveLegacyWorkspaceRestoreSources, type LegacyWorkspaceRestoreSource } from "./legacy-workspace-restore-recovery.js";
+import { hasUnrestoredRemoteWorkspace, preserveLegacyWorkspaceRestoreSources } from "./legacy-workspace-restore-recovery.js";
 import { isPreDispatchReviewWaitVerified } from "./pre-dispatch-review-wait.js";
 import { hasWorkspaceRestoreFailure } from "@paperclipai/shared";
 import { normalizeMaxTurnStopReason } from "./heartbeat-stop-metadata.js";
@@ -74,7 +74,6 @@ export async function terminalizeLegacyExecution(input: {
   writeConditions?: SQL[];
   /** Adapter settlement records a copy-back failure before host finalization. */
   recordRestoreFailureOnly?: boolean;
-  workspaceRestoreSource?: LegacyWorkspaceRestoreSource;
 }) {
   const { db, run, status } = input;
   let patch = input.patch;
@@ -123,8 +122,7 @@ export async function terminalizeLegacyExecution(input: {
       )
       .returning();
     if (!updated) return null;
-    const retainedLeaseIds = await preserveLegacyWorkspaceRestoreSources(tx as unknown as Db,
-      input.recordRestoreFailureOnly ? { ...updated, status: "failed" } : updated, input.workspaceRestoreSource);
+    const retainedLeaseIds = await preserveLegacyWorkspaceRestoreSources(tx as unknown as Db, input.recordRestoreFailureOnly ? { ...updated, status: "failed" } : updated);
     if (retainedLeaseIds.length) {
       [updated] = await tx.update(heartbeatRuns).set({ resultJson: {
         ...updated.resultJson,
@@ -312,9 +310,9 @@ export async function settleInterruptedNativeBootstrap(
 
 /** Capture the required-file obligation before unrelated host writes. Keeps
  * execution ownership while the adapter's host finalization is still running. */
-export async function recordLegacyWorkspaceRestoreFailure(db: Db, run: Run, evidence: Record<string, unknown>, source?: LegacyWorkspaceRestoreSource) {
+export async function recordLegacyWorkspaceRestoreFailure(db: Db, run: Run, evidence: Record<string, unknown>) {
   if (run.runtimeMode !== "legacy" || !hasWorkspaceRestoreFailure(evidence)) return;
   await terminalizeLegacyExecution({ db, run, status: run.status,
-    recordRestoreFailureOnly: true, patch: { resultJson: evidence }, workspaceRestoreSource: source,
+    recordRestoreFailureOnly: true, patch: { resultJson: evidence },
   });
 }

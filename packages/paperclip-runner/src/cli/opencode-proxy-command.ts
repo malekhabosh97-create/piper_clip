@@ -39,7 +39,6 @@ export function trustedOpenCodeLaunchBinding(
   commandLifecycle?: {
     beforeSpawn(): void;
     afterSpawn(): void;
-    afterExit(): void;
   };
 } {
   const command = args.length === 2 && args[0] === TRUSTED_OPENCODE_EXECUTABLE_ARG
@@ -120,7 +119,8 @@ export function trustedOpenCodeLaunchBinding(
     let materializedIdentity: { dev: number; ino: number } | undefined;
     const materializeForSpawn = () => {
       if (materialized) {
-        throw new Error("Verified OpenCode executable is still in use");
+        validateMacSnapshot(materializedIdentity);
+        return;
       }
       let destinationFd: number | undefined;
       try {
@@ -184,14 +184,9 @@ export function trustedOpenCodeLaunchBinding(
         // attackers are outside the documented local-host trust boundary in
         // docs/durable-recovery.md. Keep the verified source on an unlinked
         // descriptor, rematerialize only at the syscall boundary (including
-        // retries). Keep its private pathname until the child exits: deleting
-        // a signed executable during macOS startup can kill or stall the child.
+        // retries), then remove the executable pathname immediately.
         beforeSpawn: materializeForSpawn,
         afterSpawn() {
-          validateMacSnapshot(materializedIdentity);
-        },
-        afterExit() {
-          if (!materialized) return;
           validateMacSnapshot(materializedIdentity);
           unlinkSync(command);
           rmdirSync(dirname(command));

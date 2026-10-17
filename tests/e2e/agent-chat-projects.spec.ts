@@ -124,19 +124,12 @@ test("split handoff commits relevant plans before execution and never creates ch
       const runs = await json(
         await request.get(`/api/companies/${f.company.id}/heartbeat-runs`),
       );
-      const taskRuns = runs.filter(
+      const run = runs.find(
         (run: any) => run.contextSnapshot?.issueId === task.id,
       );
-      expect(taskRuns.length).toBeGreaterThan(0);
-      const startedAt = taskRuns
-        .filter((run: any) => run.startedAt != null)
-        .map((run: any) => Date.parse(run.startedAt));
-      // A newer queued/cancelled run need not have started. Preserve the
-      // invariant against the first actual execution, not list ordering.
-      expect(startedAt.length).toBeGreaterThan(0);
-      expect(startedAt.every(Number.isFinite)).toBe(true);
+      expect(run).toBeTruthy();
       expect(Date.parse(plan.updatedAt)).toBeLessThanOrEqual(
-        Math.min(...startedAt),
+        Date.parse(run.startedAt),
       );
     }
     expect(

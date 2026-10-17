@@ -1,4 +1,3 @@
-import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -15,8 +14,6 @@ import {
   agentWakeupRequests,
   agents,
   companies,
-  authUsers,
-  companyMemberships,
   companySkills,
   createDb,
   documentRevisions,
@@ -169,8 +166,6 @@ async function seedRunTarget(db: Db, repoRoot: string) {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
-  await db.insert(authUsers).values({ id: "responsible-user", name: "Fixture user", email: "responsible-user@example.test", createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
-  await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
   await db.insert(projects).values({
     id: projectId,
     companyId,
@@ -270,7 +265,7 @@ describeEmbeddedPostgres("heartbeat workspace finalization branch guard", () => 
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-finalize-branch-");
     db = createDb(tempDb.connectionString);
-  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
+  }, 20_000);
 
   afterEach(async () => {
     // Await every in-flight background heartbeat run to quiescence before the
@@ -304,17 +299,15 @@ describeEmbeddedPostgres("heartbeat workspace finalization branch guard", () => 
     await deleteHeartbeatRowsAfterActivityLogDrains(db);
     await db.delete(issueComments);
     await db.delete(issues);
-    await db.delete(executionWorkspaces);
     await db.delete(projectWorkspaces);
     await db.delete(projects);
     await db.delete(agentWakeupRequests);
     await db.delete(agentRuntimeState);
     await db.delete(agents);
+    await db.delete(executionWorkspaces);
     await db.delete(environments);
     await db.delete(companySkills);
-    await db.delete(companyMemberships);
     await db.delete(companies);
-    await db.delete(authUsers).where(eq(authUsers.id, "responsible-user"));
   });
 
   afterAll(async () => {

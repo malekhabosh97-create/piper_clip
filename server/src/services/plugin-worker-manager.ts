@@ -796,8 +796,6 @@ export interface WorkerDiagnostics {
  * for starting/stopping all workers and routing RPC calls.
  */
 export interface PluginWorkerManager {
-  /** Subscribe after a worker successfully applies live company configuration. */
-  onConfigApplied(listener: () => void): () => void;
   inspectIdleSleep?(hold: { ownerId: string; expiresAt: number }): Promise<{
     backgroundWork: "none" | "present" | "unknown"; pluginIds: string[];
   }>;
@@ -3728,7 +3726,6 @@ export function createPluginWorkerManager(
 ): PluginWorkerManager {
   const log = logger.child({ service: "plugin-worker-manager" });
   const workers = new Map<string, PluginWorkerHandle>();
-  const configApplied = new Set<() => void>();
   /** Per-plugin startup locks to prevent concurrent spawn races. */
   const startupLocks = new Map<string, Promise<PluginWorkerHandle>>();
   // The one shared, process-scoped aggregate route-slot controller. The manager
@@ -3739,10 +3736,6 @@ export function createPluginWorkerManager(
   );
 
   return {
-    onConfigApplied(listener) {
-      configApplied.add(listener);
-      return () => { configApplied.delete(listener); };
-    },
     async inspectIdleSleep(hold) {
       if (startupLocks.size) return { backgroundWork: "unknown", pluginIds: [] };
       const snapshot = [...workers.entries()];
@@ -3879,14 +3872,7 @@ export function createPluginWorkerManager(
           new Error(`No worker registered for plugin "${pluginId}"`),
         );
       }
-      const result = handle.call(method, params, timeoutMs, executeLogSink);
-      if (method === "configChanged") void result.then(() => {
-        for (const listener of configApplied) {
-          try { listener(); }
-          catch { log.warn({ pluginId }, "Plugin configuration listener failed"); }
-        }
-      }, () => {});
-      return result;
+      return handle.call(method, params, timeoutMs, executeLogSink);
     },
 
     openLoginPtySession(pluginId: string, input: LoginPtyOpenInput) {

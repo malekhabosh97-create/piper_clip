@@ -29,7 +29,7 @@ import { issuesApi } from "../../api/issues";
 import { useIssuePlanDocument } from "@/hooks/useIssuePlanDocument";
 import { useIssueDocuments } from "@/hooks/useIssueDocuments";
 import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
-import { selectArtifactAttachments } from "@/lib/issue-artifacts";
+import { selectAgentArtifactAttachments } from "@/lib/issue-artifacts";
 import { projectsApi } from "../../api/projects";
 import { useCompany } from "../../context/CompanyContext";
 import { useSidebar } from "../../context/SidebarContext";
@@ -102,6 +102,8 @@ import { ExternalObjectRows } from "./external-object-rows";
 import {
   asRecord,
   compactRecord,
+  defaultExecutionWorkspaceModeForProject,
+  defaultProjectWorkspaceIdForProject,
   isMainIssueWorkspace,
   overrideLane,
   sortAdapterModels,
@@ -319,11 +321,12 @@ export function IssueProperties({
     || paneTabStandaloneDocuments.length > 0;
   // Artifacts covers the same three sources the tab body composes: work
   // products, documents (redundant with the Plan tab, intentionally), and
-  // attachments from agents and people.
+  // agent-created attachments. User comment uploads stay thread-only and
+  // no longer summon the tab.
   const hasArtifactsTab =
     (paneTabWorkProducts?.length ?? 0) > 0
     || paneTabStandaloneDocuments.length > 0
-    || selectArtifactAttachments(paneTabAttachments, paneTabWorkProducts).length > 0;
+    || selectAgentArtifactAttachments(paneTabAttachments, paneTabWorkProducts).length > 0;
   const [paneTab, setPaneTab] = useState<IssuePaneTab>("properties");
   const [closedPaneTabs, setClosedPaneTabs] = useState<Set<IssuePaneTab>>(() => new Set());
   // Once a plan document exists, surface it: switch the pane to the Plan tab so
@@ -631,7 +634,7 @@ export function IssueProperties({
     onSuccess: (result, request) => {
       queryClient.setQueryData(queryKeys.executionWorkspaces.detail(result.workspace.id), result.workspace);
       void queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) });
-      if (result.workspace.projectId) void queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(result.workspace.projectId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(result.workspace.projectId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.executionWorkspaces.overview(result.workspace.companyId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.executionWorkspaces.workspaceOperations(result.workspace.id) });
       if (companyId) {
@@ -2005,7 +2008,26 @@ export function IssueProperties({
                 option.id === (issue.projectId ?? "") && "bg-accent",
               )}
               onClick={() => {
-                onUpdate({ projectId: option.kind === "project" ? option.project.id : null });
+                if (option.kind === "project") {
+                  const defaultMode = defaultExecutionWorkspaceModeForProject(option.project);
+                  onUpdate({
+                    projectId: option.project.id,
+                    projectWorkspaceId: defaultProjectWorkspaceIdForProject(option.project),
+                    executionWorkspaceId: null,
+                    executionWorkspacePreference: workspaceIsolationControlsVisible ? defaultMode : null,
+                    executionWorkspaceSettings: workspaceIsolationControlsVisible && option.project.executionWorkspacePolicy?.enabled
+                      ? { mode: defaultMode }
+                      : null,
+                  });
+                } else {
+                  onUpdate({
+                    projectId: null,
+                    projectWorkspaceId: null,
+                    executionWorkspaceId: null,
+                    executionWorkspacePreference: null,
+                    executionWorkspaceSettings: null,
+                  });
+                }
                 setProjectOpen(false);
               }}
             >

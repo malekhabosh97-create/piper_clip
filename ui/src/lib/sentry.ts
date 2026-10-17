@@ -38,15 +38,7 @@
 // (`GlobalHandlers`), the two React error boundaries, deduplicates a repeat
 // event (`Dedupe`), and links a caused-by chain (`LinkedErrors`).
 
-import {
-  buildBrowserErrorContext,
-  classifyRejectionReason,
-  readBrowserErrorState,
-  readPageLifecycle,
-  startPageDiagnostics,
-  takeRejectionEventSnapshot,
-  type BrowserErrorDetails,
-} from "./browser-error-context";
+import { buildBrowserErrorContext, readBrowserErrorState, type BrowserErrorDetails } from "./browser-error-context";
 
 let queue: Promise<void> = Promise.resolve();
 
@@ -80,11 +72,6 @@ export function initBrowserErrorMonitoring(dsn: string, environment?: string | n
     if (sentry) return;
     try {
       const Sentry = await import("@sentry/browser");
-      // Before init: the rejection snapshot listener must precede the SDK's
-      // `onunhandledrejection` handler. Diagnostics never block monitoring.
-      try {
-        startPageDiagnostics();
-      } catch { /* diagnostic unavailable */ }
       Sentry.init(buildBrowserSentryInitOptions(dsn, environment));
       sentry = Sentry;
     } catch (err) {
@@ -196,7 +183,6 @@ export function buildBrowserSentryInitOptions(
         event.contexts = {
           ...event.contexts,
           browser_state: event.contexts?.browser_state ?? readBrowserErrorState(),
-          page_lifecycle: event.contexts?.page_lifecycle ?? readPageLifecycle(),
         };
         event.tags = {
           ...event.tags,
@@ -208,16 +194,8 @@ export function buildBrowserSentryInitOptions(
         )) {
           // The SDK supplies the rejected value directly. Classify without
           // reading object properties, coercing strings, or copying its value.
-          const kind = classifyRejectionReason(hint.originalException);
-          event.tags.browser_rejection_kind = kind;
-          // Whether the browser or a script dispatched the event, and which
-          // promise implementation carried it. Without a stack these are the
-          // remaining attribution facts for an `undefined` rejection.
-          const rejection = takeRejectionEventSnapshot(kind);
-          if (rejection) {
-            event.tags.browser_rejection_event = rejection.trusted ? "trusted" : "synthetic";
-            event.contexts.rejection_event = rejection;
-          }
+          const reason = hint.originalException;
+          event.tags.browser_rejection_kind = reason === null ? "null" : typeof reason;
         }
       } catch {
         // Diagnostics must not replace or discard the original error.

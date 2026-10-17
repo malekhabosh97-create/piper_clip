@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function createSelectChain(rows: unknown[]) {
   const query = {
@@ -44,13 +44,6 @@ function createInvite(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function loadAppModules() {
-  return Promise.all([
-    import("../routes/access.js"),
-    import("../middleware/index.js"),
-  ]);
-}
-
 async function createApp(
   db: Record<string, unknown>,
   network: {
@@ -58,7 +51,10 @@ async function createApp(
     requestHead: ReturnType<typeof vi.fn>;
   },
 ) {
-  const [access, middleware] = await loadAppModules();
+  const [access, middleware] = await Promise.all([
+    import("../routes/access.js"),
+    import("../middleware/index.js"),
+  ]);
   const app = express();
   app.use((req, _res, next) => {
     (req as any).actor = { type: "anon" };
@@ -78,12 +74,7 @@ async function createApp(
   return app;
 }
 
-describe("GET /invites/:token/test-resolution", { sequential: true }, () => {
-  beforeAll(async () => {
-    // Route transformation is fixture setup, not part of the network assertions.
-    await loadAppModules();
-  });
-
+describe("GET /invites/:token/test-resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

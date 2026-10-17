@@ -30,8 +30,7 @@ export function openCodeProxyTaskEnvelope(params: Record<string, unknown>) {
         }
       : {}),
     constraints: [
-      // baseInstructions already travels in the system prompt. Keep task
-      // constraints here without duplicating the agent instruction bundle.
+      text(params.baseInstructions, "Complete only the supplied task."),
       "Use Paperclip MCP tools for semantic operations.",
     ],
   });

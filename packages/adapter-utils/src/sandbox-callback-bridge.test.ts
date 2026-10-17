@@ -1,6 +1,6 @@
 import { execFile as execFileCallback, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import fs, { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -99,12 +99,6 @@ describe("sandbox callback bridge", () => {
         }
       },
     };
-  }
-
-  // Match the gateway's atomic publication. A visible, growing .json file can
-  // be stat'ed while empty and exceed the reader's reserved size on the read.
-  function publishBridgeRequest(requestPath: string, body: string): Promise<void> {
-    return createFileSystemSandboxCallbackBridgeQueueClient().writeTextFile(requestPath, body);
   }
 
   async function waitForJsonFile(directory: string, timeoutMs = 2_000): Promise<string> {
@@ -303,80 +297,6 @@ describe("sandbox callback bridge", () => {
 
   });
 
-  it("publishes complete fixture envelopes before queue readers can reserve their size", async () => {
-    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-bridge-publication-"));
-    cleanupDirs.push(rootDir);
-    const client = createFileSystemSandboxCallbackBridgeQueueClient();
-    const requestPath = path.join(rootDir, "fixture.json");
-    const payload = JSON.stringify({ id: "fixture", method: "GET", path: "/api/openapi.json", body: "" });
-    const listingsDuringWrite: string[][] = [];
-    const write = fs.writeFile.bind(fs);
-    // Force a poll while the writer has created its file but not filled it.
-    // A direct .json write would become visible and reserve zero bytes here.
-    const spy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, body, options) => {
-      if (typeof file !== "string" || path.dirname(file) !== rootDir) return write(file, body, options);
-      await write(file, "", options);
-      const visible = await client.listJsonFiles(rootDir);
-      listingsDuringWrite.push(visible);
-      const reserved = visible.includes("fixture.json") ? await client.fileSize!(requestPath) : null;
-      await write(file, body, options);
-      if (reserved !== null) await client.readTextFile(requestPath, reserved);
-    });
-    try {
-      await publishBridgeRequest(requestPath, payload);
-      expect(listingsDuringWrite).toEqual([[]]);
-      expect(await client.listJsonFiles(rootDir)).toEqual(["fixture.json"]);
-      const size = await client.fileSize!(requestPath);
-      expect(size).toBe(Buffer.byteLength(payload));
-      await expect(client.readTextFile(requestPath, size)).resolves.toBe(payload);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("keeps the bounded reader fail-closed when a visible request grows after its size is reserved", async () => {
-    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-bridge-growing-request-"));
-    cleanupDirs.push(rootDir);
-    const queueDir = path.join(rootDir, "queue");
-    const directories = sandboxCallbackBridgeDirectories(queueDir);
-    const client = createFileSystemSandboxCallbackBridgeQueueClient();
-    const requestPath = path.join(directories.requestsDir, "growing.json");
-    await mkdir(directories.requestsDir, { recursive: true });
-    // Deliberately violate the publication contract to reproduce the old
-    // fixture interleaving, without timing assumptions or a weakened limit.
-    await writeFile(requestPath, "");
-    const payload = JSON.stringify({ id: "growing", method: "GET", path: "/api/openapi.json", body: "" });
-    let reserved: number | undefined;
-    const handleRequest = vi.fn(async () => ({ status: 200, body: "unexpected" }));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const worker = await startSandboxCallbackBridgeWorker({
-        queueDir, handleRequest,
-        client: { ...client, fileSize: async (file) => {
-          const size = await client.fileSize!(file);
-          if (file === requestPath && reserved === undefined) {
-            reserved = size;
-            await writeFile(requestPath, payload);
-          }
-          return size;
-        } },
-      });
-      cleanupFns.push(() => worker.stop());
-      const responseFile = await waitForJsonFile(directories.responsesDir);
-      const response = JSON.parse(await readFile(path.join(directories.responsesDir, responseFile), "utf8"));
-      expect(reserved).toBe(0);
-      expect(response.status).toBe(503);
-      expect(JSON.parse(response.body)).toEqual({
-        error: "Sandbox callback bridge worker failed: Bridge envelope exceeded the configured size limit.",
-      });
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Bridge envelope exceeded the configured size limit."));
-      expect(handleRequest).not.toHaveBeenCalled();
-      await worker.stop();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
   it("serves schema discovery over the queue and denies schema mutations and lookalikes", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-bridge-schema-"));
     cleanupDirs.push(rootDir);
@@ -402,14 +322,11 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/secrets" },
     ];
     for (const [index, request] of requests.entries()) {
-      await publishBridgeRequest(path.join(directories.requestsDir, `schema-${index}.json`), JSON.stringify({
+      await writeFile(path.join(directories.requestsDir, `schema-${index}.json`), JSON.stringify({
         id: `schema-${index}`, ...request, query: "", headers: {}, body: "", createdAt: new Date().toISOString(),
       }));
     }
-    await vi.waitFor(async () => {
-      expect(await createFileSystemSandboxCallbackBridgeQueueClient().listJsonFiles(directories.responsesDir))
-        .toEqual(requests.map((_, index) => `schema-${index}.json`));
-    }, { timeout: 5_000 });
+    await worker.stop({ drainTimeoutMs: 5_000 });
     for (const [index] of requests.entries()) {
       const response = JSON.parse(await readFile(path.join(directories.responsesDir, `schema-${index}.json`), "utf8"));
       expect(response.status).toBe(index === 0 ? 200 : 403);
@@ -438,7 +355,7 @@ describe("sandbox callback bridge", () => {
       },
     });
 
-    await publishBridgeRequest(
+    await writeFile(
       path.posix.join(directories.requestsDir, "req-1.json"),
       `${JSON.stringify({
         id: "req-1",
@@ -449,6 +366,7 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
+      "utf8",
     );
 
     await worker.stop({ drainTimeoutMs: 1_000 });
@@ -485,7 +403,7 @@ describe("sandbox callback bridge", () => {
       },
     });
 
-    await publishBridgeRequest(
+    await writeFile(
       path.posix.join(directories.requestsDir, "req-a.json"),
       `${JSON.stringify({
         id: "req-a",
@@ -496,8 +414,9 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
+      "utf8",
     );
-    await publishBridgeRequest(
+    await writeFile(
       path.posix.join(directories.requestsDir, "req-b.json"),
       `${JSON.stringify({
         id: "req-b",
@@ -508,6 +427,7 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
+      "utf8",
     );
 
     await worker.stop({ drainTimeoutMs: 1_000 });
@@ -542,7 +462,7 @@ describe("sandbox callback bridge", () => {
       },
     });
 
-    await publishBridgeRequest(
+    await writeFile(
       path.posix.join(directories.requestsDir, "req-a.json"),
       `${JSON.stringify({
         id: "req-a",
@@ -553,8 +473,9 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
+      "utf8",
     );
-    await publishBridgeRequest(
+    await writeFile(
       path.posix.join(directories.requestsDir, "req-b.json"),
       `${JSON.stringify({
         id: "req-b",
@@ -565,6 +486,7 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
+      "utf8",
     );
 
     // Begin the short drain deadline only after the first handler has started.
@@ -670,7 +592,7 @@ describe("sandbox callback bridge", () => {
     });
 
     const requestId = "transient-recovery-1";
-    await publishBridgeRequest(
+    await writeFile(
       path.join(directories.requestsDir, `${requestId}.json`),
       JSON.stringify({
         id: requestId,
@@ -680,6 +602,7 @@ describe("sandbox callback bridge", () => {
         headers: {},
         body: "",
       }),
+      "utf8",
     );
 
     const responseFile = await waitForJsonFile(directories.responsesDir, 10_000);
@@ -1059,7 +982,7 @@ describe("sandbox callback bridge", () => {
       await bridge.stop();
     });
 
-    await publishBridgeRequest(
+    await writeFile(
       path.posix.join(directories.requestsDir, "existing.json"),
       `${JSON.stringify({
         id: "existing",
@@ -1070,6 +993,7 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
+      "utf8",
     );
 
     const queueFullResponse = await fetch(`${bridge.baseUrl}/api/agents/me`, {
@@ -1500,7 +1424,6 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/goals/goal-1" },
       { method: "GET", path: "/api/issues/issue-1" },
       { method: "GET", path: "/api/issues/issue-1/heartbeat-context" },
-      { method: "GET", path: "/api/issues/issue-1/activity" },
       { method: "GET", path: "/api/issues/issue-1/comments" },
       { method: "GET", path: "/api/issues/issue-1/comments/c-1" },
       { method: "POST", path: "/api/issues/issue-1/comments" },
@@ -1547,10 +1470,6 @@ describe("sandbox callback bridge", () => {
     }
 
     const denied: Array<{ method: string; path: string }> = [
-      { method: "POST", path: "/api/issues/issue-1/activity" },
-      { method: "GET", path: "/api/issues/issue-1/activity/extra" },
-      { method: "GET", path: "/api/companies/co-1/activity" },
-      { method: "GET", path: "/api/companies/co-1/audit/agent-actions" },
       { method: "GET", path: "/api/companies/co-1/agent-commentary" },
       { method: "POST", path: "/api/companies/co-1/agent-commentary/other" },
       { method: "POST", path: "/api/companies/co-1/email/inboxes" },
@@ -1904,7 +1823,7 @@ describe("sandbox callback bridge", () => {
     const queueDir = path.posix.join(rootDir, "queue");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
     await mkdir(directories.requestsDir, { recursive: true });
-    await publishBridgeRequest(path.posix.join(directories.requestsDir, "req-a.json"), bridgeRequestJson("req-a"));
+    await writeFile(path.posix.join(directories.requestsDir, "req-a.json"), bridgeRequestJson("req-a"), "utf8");
 
     const { runtimeSpan, workerErrors } = createWorkerErrorCapture();
 
@@ -2953,7 +2872,7 @@ describe("sandbox callback bridge", () => {
     const queueDir = path.posix.join(rootDir, "queue");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
     await mkdir(directories.requestsDir, { recursive: true });
-    await publishBridgeRequest(path.posix.join(directories.requestsDir, "req-w.json"), bridgeRequestJson("req-w"));
+    await writeFile(path.posix.join(directories.requestsDir, "req-w.json"), bridgeRequestJson("req-w"), "utf8");
 
     const base = createFileSystemSandboxCallbackBridgeQueueClient();
     let listCalls = 0;
@@ -3000,7 +2919,7 @@ describe("sandbox callback bridge", () => {
     const queueDir = path.posix.join(rootDir, "queue");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
     await mkdir(directories.requestsDir, { recursive: true });
-    await publishBridgeRequest(path.posix.join(directories.requestsDir, "req-ok.json"), bridgeRequestJson("req-ok"));
+    await writeFile(path.posix.join(directories.requestsDir, "req-ok.json"), bridgeRequestJson("req-ok"), "utf8");
 
     const { runtimeSpan, workerErrors } = createWorkerErrorCapture();
     const processed: string[] = [];

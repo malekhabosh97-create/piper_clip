@@ -10,14 +10,11 @@
 import type { Agent } from "@paperclipai/shared";
 import type { IssueChatComment } from "@/lib/issue-chat-messages";
 import { resolveCommentAttribution } from "@/lib/comment-attribution";
-import { resolveIssueChatHumanAuthor } from "@/lib/issue-chat-human-author";
-import type { CompanyUserProfile } from "@/lib/company-members";
 import type { TaskChatAuthorKind, TaskChatItem, TaskChatMessageItem } from "./task-chat-model";
 
 export interface TaskChatAdapterContext {
   agentMap?: Map<string, Agent>;
   userLabelMap?: ReadonlyMap<string, string> | null;
-  userProfileMap?: ReadonlyMap<string, CompanyUserProfile> | null;
   currentUserId?: string | null;
   /**
    * Task's current assignee. Agent comments from anyone else are cross-issue
@@ -81,12 +78,6 @@ export function commentsToTaskChatItems(
     let authorName: string | undefined;
     let agentIcon: string | null | undefined;
     let onBehalfOfUserName: string | undefined;
-    const humanAuthor = kind === "human" ? resolveIssueChatHumanAuthor({
-      authorUserId: comment.authorUserId,
-      authorName: comment.authorUserId ? ctx.userLabelMap?.get(comment.authorUserId) : null,
-      currentUserId: ctx.currentUserId,
-      userProfileMap: ctx.userProfileMap,
-    }) : undefined;
     if (kind === "agent") {
       const agentId = effectiveAgentId(comment);
       authorName = (agentId && ctx.agentMap?.get(agentId)?.name) || "Agent";
@@ -98,7 +89,8 @@ export function commentsToTaskChatItems(
         resolveUserLabel: (userId) => ctx.userLabelMap?.get(userId),
       })?.userName;
     } else if (kind === "human") {
-      authorName = humanAuthor!.authorName;
+      authorName =
+        (comment.authorUserId && ctx.userLabelMap?.get(comment.authorUserId)) || undefined;
     }
     const queued = comment.queueState === "queued" || comment.clientStatus === "queued";
     const optimistic =
@@ -128,14 +120,8 @@ export function commentsToTaskChatItems(
       kind: "message",
       author: kind,
       authorName,
-      ...(humanAuthor ? {
-        authorUserId: comment.authorUserId,
-        authorAvatarUrl: humanAuthor.avatarUrl,
-        isCurrentUser: humanAuthor.isCurrentUser,
-      } : {}),
       agent: effectiveAgentId(comment) ? ctx.agentMap?.get(effectiveAgentId(comment)!) ?? { id: effectiveAgentId(comment)! } : undefined,
       text: comment.body,
-      origin: comment.origin ?? "comment",
       sourceChannel: kind === "human" ? comment.metadata?.sourceChannel : undefined,
       timestamp: formatTaskChatCommentTimestamp(comment, kind),
       optimistic,

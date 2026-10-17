@@ -1,9 +1,8 @@
 import { SkillBinaryFile } from "../components/SkillBinaryFile";
-import { skillFileLinkHref } from "@/lib/skill-file-links";
 import { SkillSourceProvenance } from "../components/SkillSourceProvenance";
 import { AgentIdentity } from "@/components/AgentIdentity";
 import { AgentAvatar } from "@/components/AgentAvatar";
-import { useCallback, useEffect, useMemo, useRef, useState, type SVGProps } from "react";
+import { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -2992,11 +2991,6 @@ export function SkillDetailPage({
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
-  const resolveFileLinkHref = useCallback(
-    (href: string) => detail ? skillFileLinkHref(detail, selectedPath, href, routeSkills ?? [detail]) : null,
-    [detail, selectedPath, routeSkills],
-  );
-
   if (!detail) {
     return loading ? <PageSkeleton variant="detail" /> : <EmptyState icon={Boxes} message="Skill not found." />;
   }
@@ -3123,13 +3117,7 @@ export function SkillDetailPage({
               />
             )
           ) : file.markdown && viewMode === "preview" ? (
-            <MarkdownBody
-              softBreaks={false}
-              linkIssueReferences={false}
-              resolveLinkHref={resolveFileLinkHref}
-            >
-              {body}
-            </MarkdownBody>
+            <MarkdownBody softBreaks={false} linkIssueReferences={false}>{body}</MarkdownBody>
           ) : (
             <pre className="overflow-x-auto whitespace-pre-wrap wrap-break-word border-0 bg-transparent p-0 font-mono text-sm text-foreground">
               <code>{file.content}</code>

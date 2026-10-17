@@ -35,8 +35,6 @@ export interface McpConnectionSetup {
 }
 
 export interface McpConnection {
-  companyPrefix?: string;
-  agent?: { id: string; name: string; provider: string } | null;
   id: string;
   companyId: string;
   clientName: string;
@@ -50,8 +48,6 @@ export interface McpConnection {
 
 /** Code-scoped details shown before activating an operator-approved Dot agent. */
 export interface McpDotPairingPreview {
-  providerKind?: "openai_dot" | "grok_bot";
-  authorizingPerson?: string;
   company: { id: string; name: string };
   agent: { id: string; name: string };
   permissions: string;

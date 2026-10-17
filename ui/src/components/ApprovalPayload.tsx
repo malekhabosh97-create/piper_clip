@@ -1,4 +1,4 @@
-import { UserPlus, Lightbulb, ShieldAlert, ShieldCheck } from "lucide-react";
+import { UserPlus, Lightbulb, ShieldAlert, ShieldCheck, FileCode2 } from "lucide-react";
 import { MarkdownBody } from "./MarkdownBody";
 import { formatCents } from "../lib/utils";
 
@@ -7,6 +7,7 @@ export const typeLabel: Record<string, string> = {
   approve_ceo_strategy: "CEO Strategy",
   budget_override_required: "Budget Override",
   request_board_approval: "Board Approval",
+  file_mutation: "File Mutation",
 };
 
 function firstNonEmptyString(...values: unknown[]): string | null {
@@ -20,6 +21,7 @@ function firstNonEmptyString(...values: unknown[]): string | null {
 
 export function approvalSubject(payload?: Record<string, unknown> | null): string | null {
   return firstNonEmptyString(
+    payload?.relativePath,
     payload?.title,
     payload?.name,
     payload?.summary,
@@ -42,6 +44,7 @@ export const typeIcon: Record<string, typeof UserPlus> = {
   approve_ceo_strategy: Lightbulb,
   budget_override_required: ShieldAlert,
   request_board_approval: ShieldCheck,
+  file_mutation: FileCode2,
 };
 
 export const defaultTypeIcon = ShieldCheck;
@@ -238,6 +241,74 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
   );
 }
 
+export function FileMutationPayload({ payload }: { payload: Record<string, unknown> }) {
+  const operation = String(payload.operation ?? "modify");
+  const relativePath = String(payload.relativePath ?? "—");
+  const baseSha = typeof payload.baseSha256 === "string" ? payload.baseSha256 : null;
+  const stagedSha = String(payload.stagedSha256 ?? "");
+  const diff = typeof payload.diff === "string" ? payload.diff : null;
+
+  const badgeColor =
+    operation === "create"
+      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+      : operation === "delete"
+      ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+      : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+
+  return (
+    <div className="mt-4 space-y-3.5 text-sm">
+      <div className="flex items-center gap-2">
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider border ${badgeColor}`}>
+          {operation}
+        </span>
+        <code className="text-sm font-semibold font-mono text-foreground px-1.5 py-0.5 rounded bg-muted">
+          {relativePath}
+        </code>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-mono">
+        <div className="p-2 rounded bg-muted/40 border border-border/50">
+          <span className="text-muted-foreground block text-[10px] uppercase font-sans tracking-wide">Base SHA-256</span>
+          <span className="truncate block" title={baseSha ?? "None (New File)"}>
+            {baseSha ? baseSha.slice(0, 16) + "..." : "(new file)"}
+          </span>
+        </div>
+        <div className="p-2 rounded bg-muted/40 border border-border/50">
+          <span className="text-muted-foreground block text-[10px] uppercase font-sans tracking-wide">Staged SHA-256</span>
+          <span className="truncate block" title={stagedSha}>
+            {stagedSha ? stagedSha.slice(0, 16) + "..." : "—"}
+          </span>
+        </div>
+      </div>
+
+      {diff && (
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Proposed Diff</p>
+          <pre className="max-h-64 overflow-auto rounded-lg border border-border/60 bg-muted/50 p-3 font-mono text-xs leading-5 text-foreground whitespace-pre-wrap">
+            {diff.split("\n").map((line, idx) => {
+              const isAdded = line.startsWith("+");
+              const isRemoved = line.startsWith("-");
+              const isHeader = line.startsWith("@@") || line.startsWith("---") || line.startsWith("+++");
+              const lineClass = isAdded
+                ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 -mx-3 px-3 block"
+                : isRemoved
+                ? "text-rose-600 dark:text-rose-400 bg-rose-500/10 -mx-3 px-3 block"
+                : isHeader
+                ? "text-blue-600 dark:text-blue-400 font-bold block"
+                : "block";
+              return (
+                <span key={idx} className={lineClass}>
+                  {line}
+                </span>
+              );
+            })}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ApprovalPayloadRenderer({
   type,
   payload,
@@ -252,5 +323,6 @@ export function ApprovalPayloadRenderer({
   if (type === "request_board_approval") {
     return <BoardApprovalPayload payload={payload} hideTitle={hidePrimaryTitle} />;
   }
+  if (type === "file_mutation") return <FileMutationPayload payload={payload} />;
   return <CeoStrategyPayload payload={payload} />;
 }

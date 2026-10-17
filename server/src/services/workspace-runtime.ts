@@ -1,7 +1,4 @@
-import { sanitizeRuntimeServiceBaseEnv } from "./runtime-service-env.js";
-import { verifiedRecordedIsolatedRemoteSource } from "./isolated-remote-workspace-source.js";
-export { sanitizeRuntimeServiceBaseEnv } from "./runtime-service-env.js";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -37,7 +34,7 @@ import {
 } from "@paperclipai/shared";
 import { and, desc, eq, gte, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { asNumber, asString, parseObject, renderTemplate } from "../adapters/utils.js";
-import { conflict, unprocessable } from "../errors.js";
+import { conflict } from "../errors.js";
 import { resolveHomeAwarePath } from "../home-paths.js";
 import { hasVerifiedWorktreeSeedManifest, isVerifiedWorktreeSeedManifest } from "../worktree-seed-manifest.js";
 import {
@@ -70,8 +67,6 @@ import { isRuntimeOwnedGitBranch } from "./execution-workspace-branch-ownership.
 import { logActivity } from "./activity-log.js";
 import { readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
 import { workspaceGitOperationScheduler } from "./workspace-git-operation-scheduler.js";
-import { classifyGitCloneFailure } from "./git-connection-failure.js";
-import { readWorkspaceBaseRefDiagnostic, type WorkspaceBaseRefDiagnostic } from "./workspace-base-ref-diagnostics.js";
 import {
   MANAGED_GIT_WORKTREE_REASON_CODES,
   readManagedGitInspectionDiagnostic,
@@ -684,6 +679,23 @@ export async function ensureServerWorkspaceLinksCurrent(
   );
 }
 
+export function sanitizeRuntimeServiceBaseEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("PAPERCLIP_")) {
+      delete env[key];
+    }
+  }
+  // These origin settings belong to the parent instance. Letting them leak into a
+  // managed worktree runtime can send auth cookies and OAuth callbacks to the wrong
+  // Paperclip instance. Runtime/service overrides are merged back after sanitizing.
+  delete env.BETTER_AUTH_URL;
+  delete env.BETTER_AUTH_BASE_URL;
+  delete env.DATABASE_URL;
+  delete env.npm_config_tailscale_auth;
+  delete env.npm_config_authenticated_private;
+  return env;
+}
 
 function stableRuntimeServiceId(input: {
   adapterType: string;
@@ -902,17 +914,13 @@ async function executeProcess(input: {
   };
 }
 
-async function runGit(args: string[], cwd: string, opts?: {
-  env?: NodeJS.ProcessEnv;
-  observe?: (result: Awaited<ReturnType<typeof executeProcess>>) => void;
-}): Promise<string> {
+async function runGit(args: string[], cwd: string, opts?: { env?: NodeJS.ProcessEnv }): Promise<string> {
   const proc = await executeProcess({
     command: "git",
     args,
     cwd,
     env: opts?.env,
   });
-  opts?.observe?.(proc);
   if (proc.code !== 0) {
     throw new Error(proc.stderr.trim() || proc.stdout.trim() || `git ${args.join(" ")} failed`);
   }
@@ -963,32 +971,15 @@ export async function refreshRemoteTrackingBaseRef(
   baseRef: string,
   resolveGitAuth?: GitRemoteAuthProvider | null,
 ): Promise<string[]> {
-  return (await refreshRemoteTrackingBaseRefWithDiagnostic(repoRoot, baseRef, resolveGitAuth)).warnings;
-}
-
-async function refreshRemoteTrackingBaseRefWithDiagnostic(
-  repoRoot: string,
-  baseRef: string,
-  resolveGitAuth?: GitRemoteAuthProvider | null,
-): Promise<{ warnings: string[]; diagnostic: WorkspaceBaseRefDiagnostic }> {
-  const diagnostic: WorkspaceBaseRefDiagnostic = {
-    schemaVersion: 1, remoteLookup: "not_attempted", authLookup: "not_requested", fetch: "not_attempted",
-  };
   const remoteTracking = parseRemoteTrackingRef(baseRef);
-  if (!remoteTracking) return { warnings: [], diagnostic };
+  if (!remoteTracking) return [];
 
   const remoteUrl = await runGit(["remote", "get-url", remoteTracking.remote], repoRoot)
-    .then((value) => {
-      diagnostic.remoteLookup = value.trim() ? "resolved" : "empty";
-      return value.trim() || null;
-    })
-    .catch(() => { diagnostic.remoteLookup = "failed"; return null; });
-  if (!remoteUrl) return { warnings: [], diagnostic };
+    .then((value) => value.trim() || null)
+    .catch(() => null);
+  if (!remoteUrl) return [];
 
-  const auth = resolveGitAuth ? await resolveGitAuth(remoteUrl).then((value) => {
-    diagnostic.authLookup = value ? "resolved" : "unavailable";
-    return value;
-  }).catch(() => { diagnostic.authLookup = "failed"; return null; }) : null;
+  const auth = resolveGitAuth ? await resolveGitAuth(remoteUrl).catch(() => null) : null;
   try {
     await runGit([
       ...(auth?.configArgs ?? []),
@@ -996,52 +987,24 @@ async function refreshRemoteTrackingBaseRefWithDiagnostic(
       "--prune",
       remoteTracking.remote,
       `+refs/heads/${remoteTracking.branch}:refs/remotes/${remoteTracking.remote}/${remoteTracking.branch}`,
-    ], repoRoot, {
-      ...(auth ? { env: { ...process.env, ...auth.env } } : {}),
-      observe: (proc) => {
-        diagnostic.fetch = proc.code === 0 ? "succeeded" : "failed";
-        if (proc.code !== null) diagnostic.fetchExitCode = proc.code;
-        if (proc.code === 0) return;
-        diagnostic.fetchFailureKind = "unknown";
-        // Diagnostic parsing must not add unbounded work to an already failed
-        // fetch. Keep the existing captured warning/output limits unchanged.
-        if (proc.stdoutTruncated || proc.stderrTruncated || proc.stderrBytes > 8192 || proc.stdoutBytes > 8192) return;
-        // Reuse only the closed transport diagnostic parser. This is not a
-        // clone failure marker and never changes reporting or ref validation.
-        const failure = Object.assign(new Error(), { code: proc.code, stderr: proc.stderr });
-        diagnostic.fetchFailureKind = classifyGitCloneFailure(remoteUrl, failure)?.reason ?? "unknown";
-        if (proc.code === 128 && !proc.stdout.trim() &&
-            proc.stderr.trim() === `fatal: couldn't find remote ref refs/heads/${remoteTracking.branch}`) {
-          diagnostic.fetchFailureKind = "remote_ref_not_found";
-        }
-      },
-    });
-    return { warnings: [], diagnostic };
+    ], repoRoot, auth ? { env: { ...process.env, ...auth.env } } : undefined);
+    return [];
   } catch (error) {
-    diagnostic.fetch = "failed";
-    diagnostic.fetchFailureKind ??= "unknown";
     const rawMessage = error instanceof Error ? error.message : String(error);
-    // Keep the existing warning contract; new diagnostics never retain this text.
+    // Mask URL userinfo (any scheme) and whole URL query strings before the message rides
+    // warnings that reach run logs.
     const message = rawMessage
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1***@")
       .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s"'?]*)\?[^\s"']*/gi, "$1?***");
     const authNote = auth
-      ? ` The fetch used ${auth.secretName ? `the ${auth.secretName} company-secret GitHub credential` : "the server-environment GitHub credential"}.`
+      ? ` The fetch authenticated with ${auth.secretName ? `the ${auth.secretName} company-secret GitHub credential` : "the server-environment GitHub credential"}, which may have been rejected.`
       : "";
-    return { warnings: [`Could not refresh base ref ${baseRef} before preparing the execution workspace: ${message}${authNote}`], diagnostic };
+    return [`Could not refresh base ref ${baseRef} before preparing the execution workspace: ${message}${authNote}`];
   }
 }
 
-async function resolveBaseRefSha(repoRoot: string, baseRef: string, diagnostic?: WorkspaceBaseRefDiagnostic): Promise<string | null> {
-  return await runGit(["rev-parse", "--verify", `${baseRef}^{commit}`], repoRoot, diagnostic ? {
-    observe: (proc) => {
-      diagnostic.refResolution = proc.code === 0 ? "succeeded" : "failed";
-      if (proc.code !== null) diagnostic.refExitCode = proc.code;
-    },
-  } : undefined).catch(() => {
-    if (diagnostic && !diagnostic.refResolution) diagnostic.refResolution = "spawn_failed";
-    return null;
-  });
+async function resolveBaseRefSha(repoRoot: string, baseRef: string): Promise<string | null> {
+  return await runGit(["rev-parse", "--verify", `${baseRef}^{commit}`], repoRoot).catch(() => null);
 }
 
 function readRecordedBaseRefSha(metadata: Record<string, unknown> | null | undefined): string | null {
@@ -2420,7 +2383,7 @@ export async function ensureGitWorktreeBranchCoherent(input: {
 }
 
 // A configured base ref that does not resolve to a commit, even after an
-// attempted fetch of its remote-tracking counterpart. The caller must
+// authenticated fetch of its `origin/<branch>` counterpart. The caller must
 // stop before `git worktree add` and raise a pre-dispatch configuration
 // failure. `requestedRef` keeps the operator spelling for the human notice.
 // `recoveryIdentityRef` is the canonical remote ref the resolver probed, so two
@@ -2432,33 +2395,22 @@ export class UnresolvedWorkspaceBaseRefError extends Error {
   recoveryIdentityRef: string;
   attemptedRefs: string[];
   fetchError: string | null;
-  defaultBranch: string | null;
 
   constructor(input: {
     requestedRef: string;
     recoveryIdentityRef: string;
     attemptedRefs: string[];
     fetchError?: string | null;
-    defaultBranch?: string | null;
   }) {
     super(
-      `Configured workspace base ref "${input.requestedRef}" could not be resolved to a commit ` +
-      `(tried: ${input.attemptedRefs.join(", ")}). Check that the ref exists and the repository is accessible before retrying.`,
+      `Configured workspace base ref "${input.requestedRef}" did not resolve to a commit on origin after an authenticated fetch.`,
     );
     this.name = "UnresolvedWorkspaceBaseRefError";
     this.requestedRef = input.requestedRef;
     this.recoveryIdentityRef = input.recoveryIdentityRef;
     this.attemptedRefs = input.attemptedRefs;
     this.fetchError = input.fetchError ?? null;
-    this.defaultBranch = input.defaultBranch ?? null;
   }
-}
-
-const unresolvedBaseRefDiagnostics = new WeakMap<Error, WorkspaceBaseRefDiagnostic>();
-
-/** Reads only the actual resolver's private receipt, not similarly named fields. */
-export function readUnresolvedWorkspaceBaseRefDiagnostic(error: unknown): WorkspaceBaseRefDiagnostic | null {
-  return error instanceof Error ? readWorkspaceBaseRefDiagnostic(unresolvedBaseRefDiagnostics.get(error)) : null;
 }
 
 export function isUnresolvedWorkspaceBaseRefError(error: unknown): error is UnresolvedWorkspaceBaseRefError {
@@ -2480,7 +2432,6 @@ type AuthoritativeBaseRefResolution =
       attemptedRefs: string[];
       warnings: string[];
       fetchError: string | null;
-      diagnostic: WorkspaceBaseRefDiagnostic;
     };
 
 // Resolve the authoritative base ref for a fresh worktree. A configured local
@@ -2523,9 +2474,9 @@ async function resolveAuthoritativeBaseRef(
     return { resolved: true, baseRef: configured, warnings, refreshed: false };
   }
   if (remoteTracking && await remoteExists(repoRoot, remoteTracking.remote)) {
-    const { warnings: fetchWarnings, diagnostic } = await refreshRemoteTrackingBaseRefWithDiagnostic(repoRoot, configured, resolveGitAuth);
+    const fetchWarnings = await refreshRemoteTrackingBaseRef(repoRoot, configured, resolveGitAuth);
     warnings.push(...fetchWarnings);
-    if (await resolveBaseRefSha(repoRoot, configured, diagnostic)) {
+    if (await resolveBaseRefSha(repoRoot, configured)) {
       return { resolved: true, baseRef: configured, warnings, refreshed: true };
     }
     // Build the recovery identity from the parsed remote and branch. The raw
@@ -2540,7 +2491,6 @@ async function resolveAuthoritativeBaseRef(
       attemptedRefs: [configured],
       warnings,
       fetchError: fetchWarnings[0] ?? null,
-      diagnostic,
     };
   }
 
@@ -2568,9 +2518,9 @@ async function resolveAuthoritativeBaseRef(
     return { resolved: true, baseRef: configured, warnings, refreshed: false };
   }
   const remoteCandidate = `origin/${configured}`;
-  const { warnings: fetchWarnings, diagnostic } = await refreshRemoteTrackingBaseRefWithDiagnostic(repoRoot, remoteCandidate, resolveGitAuth);
+  const fetchWarnings = await refreshRemoteTrackingBaseRef(repoRoot, remoteCandidate, resolveGitAuth);
   warnings.push(...fetchWarnings);
-  if (await resolveBaseRefSha(repoRoot, remoteCandidate, diagnostic)) {
+  if (await resolveBaseRefSha(repoRoot, remoteCandidate)) {
     return { resolved: true, baseRef: remoteCandidate, warnings, refreshed: true };
   }
   return {
@@ -2580,7 +2530,6 @@ async function resolveAuthoritativeBaseRef(
     attemptedRefs: [remoteCandidate],
     warnings,
     fetchError: fetchWarnings[0] ?? null,
-    diagnostic,
   };
 }
 
@@ -2703,17 +2652,10 @@ function parseGitWorktreeListPorcelain(raw: string): GitWorktreeListEntry[] {
 }
 
 async function resolveGitOwnerRepoRoot(cwd: string): Promise<string> {
-  const checkoutRoot = await fs.realpath(path.resolve(await runGit(["rev-parse", "--show-toplevel"], cwd)));
-  try {
-    const commonDir = await fs.realpath(path.resolve(checkoutRoot, await runGit(["rev-parse", "--git-common-dir"], checkoutRoot)));
-    const candidate = path.dirname(commonDir);
-    const candidateRoot = await fs.realpath(path.resolve(await runGit(["rev-parse", "--show-toplevel"], candidate)));
-    const candidateGitDir = await fs.realpath(path.resolve(candidate, await runGit(["rev-parse", "--absolute-git-dir"], candidate)));
-    const candidateCommonDir = await fs.realpath(path.resolve(candidate, await runGit(["rev-parse", "--git-common-dir"], candidate)));
-    if (candidateRoot === candidate && candidateGitDir === commonDir && candidateCommonDir === commonDir) return candidateRoot;
-  } catch {
-  }
-  return checkoutRoot;
+  const checkoutRoot = path.resolve(await runGit(["rev-parse", "--show-toplevel"], cwd));
+  const commonDir = await runGit(["rev-parse", "--git-common-dir"], checkoutRoot).catch(() => null);
+  if (!commonDir) return checkoutRoot;
+  return path.dirname(path.resolve(checkoutRoot, commonDir));
 }
 
 async function findRegisteredGitWorktreeByBranch(repoRoot: string, branchName: string): Promise<string | null> {
@@ -2744,24 +2686,6 @@ async function findRegisteredGitWorktreeByPath(repoRoot: string, worktreePath: s
 
 async function isGitCheckout(cwd: string): Promise<boolean> {
   return Boolean(await runGit(["rev-parse", "--git-dir"], cwd).catch(() => null));
-}
-
-// A repair suggestion must come from the remote's advertised HEAD, never the
-// runtime's main/master fallback heuristic. Failure to inspect is not a guess.
-async function readAdvertisedDefaultBranch(repoRoot: string, resolveGitAuth?: GitRemoteAuthProvider | null): Promise<string | null> {
-  try {
-    const remoteUrl = await runGit(["remote", "get-url", "origin"], repoRoot);
-    const auth = resolveGitAuth ? await resolveGitAuth(remoteUrl) : null;
-    const output = await new Promise<string>((resolve, reject) => {
-      execFile("git", [...(auth?.configArgs ?? []), "ls-remote", "--symref", "origin", "HEAD"], {
-        cwd: repoRoot, timeout: 10_000, maxBuffer: 64 * 1024,
-        env: { ...process.env, ...auth?.env, GIT_TERMINAL_PROMPT: "0" },
-      }, (error, stdout) => error ? reject(error) : resolve(stdout));
-    });
-    return /^ref: refs\/heads\/(.+)\tHEAD$/m.exec(output)?.[1] ?? null;
-  } catch {
-    return null;
-  }
 }
 
 async function detectDefaultBranch(
@@ -3048,19 +2972,6 @@ function resolveRepoManagedWorkspaceCommand(command: string, repoRoot: string) {
   return command;
 }
 
-/**
- * A configured workspace command ran to completion but exited non-zero. The message carries the
- * command's own output. The default `Error` name is kept so existing reports keep their grouping.
- */
-export class WorkspaceCommandExitError extends Error {
-  readonly exitCode: number | null;
-
-  constructor(message: string, exitCode: number | null) {
-    super(message);
-    this.exitCode = exitCode;
-  }
-}
-
 async function runWorkspaceCommand(input: {
   command: string;
   resolvedCommand?: string;
@@ -3081,11 +2992,10 @@ async function runWorkspaceCommand(input: {
   if (proc.code === 0) return;
 
   const details = [proc.stderr.trim(), proc.stdout.trim()].filter(Boolean).join("\n");
-  throw new WorkspaceCommandExitError(
+  throw new Error(
     details.length > 0
       ? `${input.label} failed: ${details}`
       : `${input.label} failed with exit code ${proc.code ?? -1}`,
-    proc.code,
   );
 }
 
@@ -3218,11 +3128,10 @@ async function recordWorkspaceCommandOperation(
   if (code === 0) return operation;
 
   const details = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-  throw new WorkspaceCommandExitError(
+  throw new Error(
     details.length > 0
       ? `${input.label} failed: ${details}`
       : `${input.label} failed with exit code ${code ?? -1}`,
-    code,
   );
 }
 
@@ -3235,10 +3144,8 @@ async function provisionExecutionWorktree(input: {
   issue: ExecutionWorkspaceIssueRef | null;
   agent: ExecutionWorkspaceAgentRef;
   created: boolean;
-  skipHostProvision?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
 }) {
-  if (input.skipHostProvision) return;
   const provisionCommand = resolveWorkspaceProvisionCommand(input.strategy, input.repoRoot);
   if (!provisionCommand) return;
   const resolvedProvisionCommand = resolveRepoManagedWorkspaceCommand(provisionCommand, input.repoRoot);
@@ -3333,9 +3240,6 @@ export async function realizeExecutionWorkspace(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
-  skipHostProvision?: boolean;
-  beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
-  afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace> {
   const rawStrategy = parseObject(input.config.workspaceStrategy);
   const strategyType = asString(rawStrategy.type, "project_primary");
@@ -3417,7 +3321,6 @@ export async function realizeExecutionWorkspace(input: {
       },
     );
   }
-  await input.beforeSourceCopy?.(repoRoot, worktreePath);
   let pendingForwardBranchReconcile: PendingForwardBranchReconcile | null = null;
   const configuredBaseRef = typeof rawStrategy.baseRef === "string" && rawStrategy.baseRef.length > 0
     ? rawStrategy.baseRef
@@ -3440,7 +3343,6 @@ export async function realizeExecutionWorkspace(input: {
   await fs.mkdir(worktreeParentDir, { recursive: true });
 
   async function reuseExistingWorktree(reusablePath: string, effectiveBranchName = branchName, extraWarnings: string[] = []) {
-    if (reusablePath !== worktreePath) await input.beforeSourceCopy?.(repoRoot, reusablePath);
     // An exact-branch attach must never move the requested branch, so skip
     // the unstarted-worktree fast-forward that template-derived reuse gets.
     const refresh = currentBaseRefSha && !requestedExistingBranch
@@ -3482,9 +3384,7 @@ export async function realizeExecutionWorkspace(input: {
         }),
       });
     }
-    await input.afterSourceCopy?.(repoRoot, reusablePath);
     await provisionExecutionWorktree({
-      skipHostProvision: input.skipHostProvision,
       strategy: rawStrategy,
       base: input.base,
       repoRoot,
@@ -3642,9 +3542,7 @@ export async function realizeExecutionWorkspace(input: {
         },
       );
     }
-    await input.afterSourceCopy?.(repoRoot, worktreePath);
     await provisionExecutionWorktree({
-      skipHostProvision: input.skipHostProvision,
       strategy: rawStrategy,
       base: input.base,
       repoRoot,
@@ -3676,15 +3574,12 @@ export async function realizeExecutionWorkspace(input: {
   // `fatal: invalid reference`. Stop here instead and raise a pre-dispatch
   // configuration failure that the setup catch routes to a human owner.
   if (!baseRefResolution.resolved) {
-    const error = new UnresolvedWorkspaceBaseRefError({
+    throw new UnresolvedWorkspaceBaseRefError({
       requestedRef: baseRefResolution.requestedRef,
       recoveryIdentityRef: baseRefResolution.recoveryIdentityRef,
       attemptedRefs: baseRefResolution.attemptedRefs,
       fetchError: baseRefResolution.fetchError,
-      defaultBranch: await readAdvertisedDefaultBranch(repoRoot, input.resolveGitAuth),
     });
-    unresolvedBaseRefDiagnostics.set(error, readWorkspaceBaseRefDiagnostic(baseRefResolution.diagnostic)!);
-    throw error;
   }
 
   let branchCreatedByRuntime = true;
@@ -3739,9 +3634,7 @@ export async function realizeExecutionWorkspace(input: {
       return await reuseExistingWorktree(reusablePath);
     }
   }
-  await input.afterSourceCopy?.(repoRoot, worktreePath);
   await provisionExecutionWorktree({
-    skipHostProvision: input.skipHostProvision,
     strategy: rawStrategy,
     base: input.base,
     repoRoot,
@@ -3794,9 +3687,6 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
-  skipHostProvision?: boolean;
-  beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
-  afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace | null> {
   const cwd = asString(input.workspace.cwd ?? input.workspace.providerRef, "").trim();
   if (!cwd) return null;
@@ -3805,8 +3695,8 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   const realized: RealizedExecutionWorkspace = {
     baseCwd: input.base.baseCwd,
     source: input.workspace.mode === "shared_workspace" ? "project_primary" : "task_session",
-    projectId: input.workspace.projectId === undefined ? input.base.projectId : input.workspace.projectId,
-    workspaceId: input.workspace.projectWorkspaceId === undefined ? input.base.workspaceId : input.workspace.projectWorkspaceId,
+    projectId: input.workspace.projectId ?? input.base.projectId,
+    workspaceId: input.workspace.projectWorkspaceId ?? input.base.workspaceId,
     repoUrl: input.workspace.repoUrl ?? input.base.repoUrl,
     repoRef: input.workspace.baseRef ?? input.base.repoRef,
     additionalWorkspaces: input.base.additionalWorkspaces ?? [],
@@ -3849,7 +3739,6 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     );
   }
   const repoRoot = await runGit(["rev-parse", "--show-toplevel"], baseCwd);
-  await input.beforeSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
   const recordedBaseRefSha = readRecordedBaseRefSha(input.workspace.metadata);
   if (await directoryExists(cwd)) {
     const reuseBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? null;
@@ -3928,9 +3817,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     });
     realized.warnings = [...repairWarnings, ...baseRefreshWarnings, ...baseDrift.warnings];
     realized.baseRefSha = refresh.baseRefSha ?? recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
-    await input.afterSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
     await provisionExecutionWorktree({
-      skipHostProvision: input.skipHostProvision,
       strategy: {
         type: "git_worktree",
         ...(provisionCommand ? { provisionCommand } : {}),
@@ -4022,9 +3909,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     skipRefresh: true,
   });
 
-  await input.afterSourceCopy?.(repoRoot, worktreePath);
   await provisionExecutionWorktree({
-    skipHostProvision: input.skipHostProvision,
     strategy: {
       type: "git_worktree",
       ...(provisionCommand ? { provisionCommand } : {}),
@@ -4156,7 +4041,6 @@ async function deleteGitBranchAtVerifiedTip(input: {
 export async function cleanupExecutionWorkspaceArtifacts(input: {
   workspace: {
     id: string;
-    companyId: string;
     cwd: string | null;
     providerType: string;
     providerRef: string | null;
@@ -4183,16 +4067,15 @@ export async function cleanupExecutionWorkspaceArtifacts(input: {
 }) {
   const warnings: string[] = [];
   const workspacePath = input.workspace.providerRef ?? input.workspace.cwd;
-  const isolatedSource = await verifiedRecordedIsolatedRemoteSource(input.workspace);
   const repoRoot = input.workspace.providerType === "git_worktree" && workspacePath
     ? await resolveGitRepoRootForWorkspaceCleanup(
       workspacePath,
-      isolatedSource ?? input.projectWorkspace?.cwd ?? null,
+      input.projectWorkspace?.cwd ?? null,
     )
     : null;
   const cleanupEnv = buildExecutionWorkspaceCleanupEnv({
     workspace: input.workspace,
-    projectWorkspaceCwd: isolatedSource ?? input.projectWorkspace?.cwd ?? null,
+    projectWorkspaceCwd: input.projectWorkspace?.cwd ?? null,
   });
   // Callers can require the workspace to match an assessed snapshot before
   // cleanup begins. Destructive paths recheck immediately before removal.
@@ -5170,32 +5053,23 @@ export async function runWorkspaceJobForControl(input: {
     adapterEnv: input.adapterEnv ?? {},
   });
   if (!resolved.command) {
-    throw unprocessable(`Workspace job "${resolved.name}" is missing command`);
+    throw new Error(`Workspace job "${resolved.name}" is missing command`);
   }
 
   await ensureServerWorkspaceLinksCurrent(resolved.cwd);
-  try {
-    return await recordWorkspaceCommandOperation(input.recorder, {
-      phase: "workspace_provision",
-      command: resolved.command,
-      cwd: resolved.cwd,
-      env: resolved.env,
-      label: `Workspace job "${resolved.name}"`,
-      metadata: {
-        workspaceCommandKind: "job",
-        workspaceCommandName: resolved.name,
-        ...(input.metadata ?? {}),
-      },
-      successMessage: `Completed workspace job "${resolved.name}"\n`,
-    });
-  } catch (error) {
-    // A job is an operator-authored command: a non-zero exit is its result, already recorded on
-    // the operation, not a server fault.
-    if (error instanceof WorkspaceCommandExitError) {
-      throw unprocessable(error.message, { code: "workspace_job_failed", exitCode: error.exitCode });
-    }
-    throw error;
-  }
+  return await recordWorkspaceCommandOperation(input.recorder, {
+    phase: "workspace_provision",
+    command: resolved.command,
+    cwd: resolved.cwd,
+    env: resolved.env,
+    label: `Workspace job "${resolved.name}"`,
+    metadata: {
+      workspaceCommandKind: "job",
+      workspaceCommandName: resolved.name,
+      ...(input.metadata ?? {}),
+    },
+    successMessage: `Completed workspace job "${resolved.name}"\n`,
+  });
 }
 
 function resolveServiceScopeId(input: {
@@ -5276,33 +5150,21 @@ export async function waitForRuntimeServiceReadiness(input: {
   let lastError = "service did not become ready";
   let lastCause: unknown;
   let probes = 0;
-  let sawServiceFailure = false;
   while (now() < deadline) {
-    const remainingMs = deadline - now();
-    // When the readiness budget is what bounds this probe, aborting it only means we ran out of
-    // time — it is not an observation about the service, so it must not replace one we already have.
-    const boundedByDeadline = remainingMs <= RUNTIME_SERVICE_READINESS_PROBE_TIMEOUT_MS;
-    const probeBudgetMs = Math.max(1, Math.min(RUNTIME_SERVICE_READINESS_PROBE_TIMEOUT_MS, remainingMs));
-    let probeSignal: AbortSignal | undefined;
+    const probeBudgetMs = Math.max(1, Math.min(RUNTIME_SERVICE_READINESS_PROBE_TIMEOUT_MS, deadline - now()));
     probes += 1;
     try {
-      probeSignal = AbortSignal.timeout(probeBudgetMs);
-      const response = await fetchImpl(readinessUrl, { signal: probeSignal });
+      const response = await fetchImpl(readinessUrl, { signal: AbortSignal.timeout(probeBudgetMs) });
       if (response.ok) return;
       lastError = `received HTTP ${response.status}`;
       lastCause = undefined;
-      sawServiceFailure = true;
     } catch (err) {
-      const abortedByDeadline = Boolean(probeSignal?.aborted) && boundedByDeadline;
-      if (!abortedByDeadline || !sawServiceFailure) {
-        lastCause = err;
-        lastError = err instanceof Error ? err.message : String(err);
-        // Node fetch hides connection errors behind "fetch failed". Retain the
-        // transport cause so a refused port is distinguishable from a timeout.
-        if (err instanceof Error && err.cause instanceof Error) {
-          lastError += `: ${err.cause.message}`;
-        }
-        sawServiceFailure = true;
+      lastCause = err;
+      lastError = err instanceof Error ? err.message : String(err);
+      // Node fetch hides connection errors behind "fetch failed". Retain the
+      // transport cause so a refused port is distinguishable from a timeout.
+      if (err instanceof Error && err.cause instanceof Error) {
+        lastError += `: ${err.cause.message}`;
       }
     }
     if (now() >= deadline) break;
@@ -7463,7 +7325,6 @@ type EnsureRuntimeServicesForRunInput = {
   workspace: RealizedExecutionWorkspace;
   executionWorkspaceId?: string | null;
   config: Record<string, unknown>;
-  skipHostProvision?: boolean;
   adapterEnv: Record<string, string>;
   onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   recorder?: WorkspaceOperationRecorder | null;
@@ -7480,9 +7341,7 @@ async function ensureRuntimeServicesForRunInvocation(
   });
   const acquiredServiceIds: string[] = [];
   const refs: RuntimeServiceRef[] = [];
-  const runtimeProvision = input.skipHostProvision
-    ? { command: "", kind: null }
-    : resolveRuntimeProvision(input);
+  const runtimeProvision = resolveRuntimeProvision(input);
   const runtimeProvisionCommand = runtimeProvision.command;
   const provisionCoordinator = createRuntimeProvisionCoordinator();
   const allowFixedPortFallback = await isPersistedIsolatedExecutionWorkspace({

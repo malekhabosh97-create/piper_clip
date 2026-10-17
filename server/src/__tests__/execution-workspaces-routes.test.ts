@@ -146,7 +146,6 @@ describe("execution workspace routes", () => {
       issueId: undefined,
       status: undefined,
       reuseEligible: true,
-      selectableForTask: false,
     });
     expect(mockExecutionWorkspaceService.list).not.toHaveBeenCalled();
   });

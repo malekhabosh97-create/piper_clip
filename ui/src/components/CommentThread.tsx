@@ -752,12 +752,6 @@ export function CommentThread({
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
-  const manualAssigneeRef = useRef(false);
-  const assigneeDraftKeyRef = useRef(draftKey);
-  const selectAssignee = (value: string) => {
-    manualAssigneeRef.current = true;
-    setReassignTarget(value);
-  };
   const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const [votingTargetId, setVotingTargetId] = useState<string | null>(null);
@@ -858,12 +852,8 @@ export function CommentThread({
   }, []);
 
   useEffect(() => {
-    if (assigneeDraftKeyRef.current !== draftKey) {
-      assigneeDraftKeyRef.current = draftKey;
-      manualAssigneeRef.current = false;
-    }
-    if (!manualAssigneeRef.current) setReassignTarget(effectiveSuggestedAssigneeValue);
-  }, [draftKey, effectiveSuggestedAssigneeValue]);
+    setReassignTarget(effectiveSuggestedAssigneeValue);
+  }, [effectiveSuggestedAssigneeValue]);
 
   // Scroll to comment when URL hash matches #comment-{id}
   useEffect(() => {
@@ -908,7 +898,6 @@ export function CommentThread({
     try {
       await onAdd(submittedBody, reopen, reassignment ?? undefined);
       if (draftKey) clearDraft(draftKey);
-      manualAssigneeRef.current = false;
       setReassignTarget(effectiveSuggestedAssigneeValue);
     } catch {
       setBody((current) =>
@@ -1062,7 +1051,7 @@ export function CommentThread({
                 noneLabel="No responsible"
                 searchPlaceholder="Search responsible..."
                 emptyMessage="No responsible found."
-                onChange={selectAssignee}
+                onChange={setReassignTarget}
                 className="text-xs h-8"
                 renderTriggerValue={(option) => {
                   if (!option) return <span className="text-muted-foreground">Responsible</span>;

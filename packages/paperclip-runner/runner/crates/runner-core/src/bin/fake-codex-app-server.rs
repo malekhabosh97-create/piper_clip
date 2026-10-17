@@ -1034,9 +1034,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             "initialized" => {}
             "thread/start" => {
-                if let Some(delay) = argument(&args, "--thread-start-delay-ms") {
-                    thread::sleep(Duration::from_millis(delay.parse()?));
-                }
                 if require_external_sandbox
                     && (message.pointer("/params/sandbox") != Some(&json!("danger-full-access"))
                         || message.pointer("/params/permissions").is_some())
@@ -1079,8 +1076,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 send(json!({
                     "id": id,
-                    "result": {"thread": {"id": state.thread_id, "sessionId": "codex-account-session"},
-                        "model": argument(&args, "--returned-model").map(Value::String).unwrap_or_else(|| message.pointer("/params/model").filter(|model| model.is_string()).cloned().unwrap_or(json!("gpt-test")))}
+                    "result": {"thread": {"id": state.thread_id, "sessionId": "codex-account-session"}}
                 }))?;
                 if agent_created_goal {
                     send(json!({

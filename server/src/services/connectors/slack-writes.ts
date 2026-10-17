@@ -1,4 +1,3 @@
-import { notifyChatPublicationWork } from "../chat-work-notifications.js";
 import { authorizeSlackDocument } from "./slack-document.js";
 import { slackMessage } from "./slack-message.js";
 import { createHash } from "node:crypto";
@@ -101,31 +100,28 @@ export async function executeSlackWrite(
     .update(JSON.stringify({ name, args }))
     .digest("hex");
   const key = `slack-tool:${binding.issueId}:${args.idempotencyKey}`;
-  const [created] = await db.transaction(async (tx) => {
-    await notifyChatPublicationWork(tx);
-    return tx
-      .insert(chatActions)
-      .values({
-        companyId: binding.companyId,
-        endpointId: authority.endpoint.id,
-        conversationId: authority.conversation?.id ?? null,
-        principalId: authority.principalId,
-        kind: "slack_tool_write",
-        providerActionId: key,
-        status: "received",
-        payload: {
-          name,
-          args,
-          hash,
-          binding,
-          userId: authority.userId,
-          revision: authority.revision,
-          invocationId,
-        },
-      })
-      .onConflictDoNothing()
-      .returning();
-  });
+  const [created] = await db
+    .insert(chatActions)
+    .values({
+      companyId: binding.companyId,
+      endpointId: authority.endpoint.id,
+      conversationId: authority.conversation?.id ?? null,
+      principalId: authority.principalId,
+      kind: "slack_tool_write",
+      providerActionId: key,
+      status: "received",
+      payload: {
+        name,
+        args,
+        hash,
+        binding,
+        userId: authority.userId,
+        revision: authority.revision,
+        invocationId,
+      },
+    })
+    .onConflictDoNothing()
+    .returning();
   const action =
     created ??
     (
@@ -155,16 +151,13 @@ export async function executeSlackWrite(
       instruction:
         "Do not retry with another key. Inspect delivery before reconciling an uncertain result.",
     };
-  const [claimed] = await db.transaction(async (tx) => {
-    await notifyChatPublicationWork(tx);
-    return tx
-      .update(chatActions)
-      .set({ status: "processing", updatedAt: new Date() })
-      .where(
-        and(eq(chatActions.id, action.id), eq(chatActions.status, "received")),
-      )
-      .returning();
-  });
+  const [claimed] = await db
+    .update(chatActions)
+    .set({ status: "processing", updatedAt: new Date() })
+    .where(
+      and(eq(chatActions.id, action.id), eq(chatActions.status, "received")),
+    )
+    .returning();
   if (!claimed) return { actionId: action.id, state: "processing" };
   try {
     authority = await resolveSlackTaskAuthority(db, binding);
@@ -259,16 +252,13 @@ export async function executeSlackWrite(
       )
         throw forbidden("Slack returned an unsupported upload destination");
       // Store the provider receipt before transport. An uncertain finish is never blindly retried.
-      await db.transaction(async (tx) => {
-        await notifyChatPublicationWork(tx);
-        return tx
-          .update(chatActions)
-          .set({
-            result: { fileId: upload.file_id, phase: "upload_allocated" },
-            updatedAt: new Date(),
-          })
-          .where(eq(chatActions.id, action.id));
-      });
+      await db
+        .update(chatActions)
+        .set({
+          result: { fileId: upload.file_id, phase: "upload_allocated" },
+          updatedAt: new Date(),
+        })
+        .where(eq(chatActions.id, action.id));
       const uploaded = await fetchImpl(url, {
         method: "POST",
         body: bytes,
@@ -446,13 +436,10 @@ export async function executeSlackWrite(
           }
         : {}),
     };
-    await db.transaction(async (tx) => {
-      await notifyChatPublicationWork(tx);
-      return tx
-        .update(chatActions)
-        .set({ status: "processed", result: receipt, updatedAt: new Date() })
-        .where(eq(chatActions.id, action.id));
-    });
+    await db
+      .update(chatActions)
+      .set({ status: "processed", result: receipt, updatedAt: new Date() })
+      .where(eq(chatActions.id, action.id));
     await logActivity(db, {
       companyId: binding.companyId,
       actorType: "agent",
@@ -481,22 +468,19 @@ export async function executeSlackWrite(
             "slack_request_timeout",
             "slack_service_unavailable",
           ].includes(details.code)));
-    await db.transaction(async (tx) => {
-      await notifyChatPublicationWork(tx);
-      return tx
-        .update(chatActions)
-        .set({
-          status: definite ? "failed" : "uncertain",
-          result: sql`coalesce(${chatActions.result}, '{}'::jsonb) || ${JSON.stringify({ code: details.code ?? "slack_delivery_uncertain", ...(error instanceof HttpError && error.status === 429 ? { retryAt: new Date(Date.now() + Number(details.retryAfterSeconds ?? 60) * 1000).toISOString() } : {}) })}::jsonb`,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(chatActions.id, action.id),
-            eq(chatActions.status, "processing"),
-          ),
-        );
-    });
+    await db
+      .update(chatActions)
+      .set({
+        status: definite ? "failed" : "uncertain",
+        result: sql`coalesce(${chatActions.result}, '{}'::jsonb) || ${JSON.stringify({ code: details.code ?? "slack_delivery_uncertain", ...(error instanceof HttpError && error.status === 429 ? { retryAt: new Date(Date.now() + Number(details.retryAfterSeconds ?? 60) * 1000).toISOString() } : {}) })}::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(chatActions.id, action.id),
+          eq(chatActions.status, "processing"),
+        ),
+      );
     if (error instanceof HttpError)
       error.details = {
         ...details,

@@ -1,4 +1,3 @@
-import { createCopilotToolEvidence } from "./copilot-tool-evidence.js";
 import { cursorActivityAdapter } from "./cursor-activity.js";
 import type { CanonicalProviderEvent } from "../../provider-events.js";
 import type { AcpxExtensionInput } from "./profile-extensions.js";
@@ -28,7 +27,6 @@ export interface AcpxActivityAdapter {
 
 const adapters: Readonly<Record<string, AcpxActivityAdapter | undefined>> = {
   cursor: cursorActivityAdapter,
-  copilot: { createToolEvidence: createCopilotToolEvidence },
 };
 const noActivity: AcpxActivityAdapter = Object.freeze({});
 

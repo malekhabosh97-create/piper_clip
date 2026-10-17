@@ -1,4 +1,3 @@
-import { useShowAgentCreatedTasks } from "../hooks/useShowAgentCreatedTasks";
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "@/lib/router";
@@ -180,7 +179,6 @@ function OrganizationIssues({
     }
     return urlSearch;
   }, [searchOverride, urlSearch, location.search]);
-  const showAgentCreatedTasks = useShowAgentCreatedTasks(selectedCompanyId, "paperclip:issues-view");
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const initialWorkspaces = searchParams.getAll("workspace").filter((workspaceId) => workspaceId.length > 0);
   const workspaceIdFilter = initialWorkspaces.length === 1 ? initialWorkspaces[0] : undefined;
@@ -256,7 +254,6 @@ function OrganizationIssues({
       workspaceIdFilter ?? "__all__",
       "compact",
       "with-routine-executions",
-      showAgentCreatedTasks,
       "infinite",
       issuePageSize,
     ],
@@ -264,7 +261,6 @@ function OrganizationIssues({
       participantAgentId,
       workspaceId: workspaceIdFilter,
       includeRoutineExecutions: true,
-      includeAgentCreatedTasks: showAgentCreatedTasks,
       limit: issuePageSize,
       offset: pageParam,
       sortField: "updated",
@@ -327,7 +323,7 @@ function OrganizationIssues({
       toolbarContext={toolbarContext}
       initialSearch={syncedSearch}
       onSearchChange={handleSearchChange}
-      enableAgentCreatedVisibilityFilter
+      enableRoutineVisibilityFilter
       hasMoreIssues={hasMoreServerIssues}
       onLoadMoreIssues={loadMoreServerIssues}
       onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}

@@ -30,8 +30,7 @@ import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { NativeSessionProtocolIntegrityError } from "../contracts/native-session-backend.js";
-import { ACPX_CREDENTIAL_BINDING_ENV, ACPX_CREDENTIAL_NAMES, CLAUDE_ROUTING_ENV_KEYS, createAcpxSidecarHostEnvironment } from "../drivers/acpx/environment.js";
-import { piCredentialNames } from "../drivers/acpx/pi-provider-config.js";
+import { ACPX_CREDENTIAL_BINDING_ENV, ACPX_CREDENTIAL_NAMES, CLAUDE_ROUTING_ENV_KEYS } from "../drivers/acpx/environment.js";
 import { githubCredentialEnvironment } from "../github-credential-environment.js";
 import {
   validatePrpEvent,
@@ -3393,7 +3392,7 @@ const runnerExplicitProviderEnvironmentKeys = [
   "PAPERCLIP_AGENT_KEY_ID",
   "PAPERCLIP_AGENT_PUBLIC_KEY",
   "PAPERCLIP_AGENT_PRIVATE_KEY",
-  ...ACPX_CREDENTIAL_NAMES.pi.filter(name => !name.startsWith("AWS_")),
+  ...ACPX_CREDENTIAL_NAMES.pi,
   ...ACPX_CREDENTIAL_NAMES.cursor,
   ...ACPX_CREDENTIAL_NAMES.copilot,
   ACPX_CREDENTIAL_BINDING_ENV,
@@ -3432,7 +3431,6 @@ const runnerExplicitProviderEnvironmentKeys = [
 
 function runnerEnvironment(
   ticket: string,
-  normalizedSessionId: string,
   explicitSource?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const platformSource = explicitSource ?? process.env;
@@ -3456,23 +3454,7 @@ function runnerEnvironment(
         if (explicitSource[key] !== undefined) environment[key] = explicitSource[key];
       }
     }
-    // Pi custom-provider references and direct cloud credentials cross only
-    // under the controller's exact run/session credential binding.
-    const marker = explicitSource[ACPX_CREDENTIAL_BINDING_ENV];
-    let binding: unknown;
-    if (marker !== undefined && Buffer.byteLength(marker) <= 4_096) {
-      try { binding = JSON.parse(marker); } catch { /* Sidecar admission rejects invalid markers. */ }
-    }
-    let taskEnvironmentSource = explicitSource;
-    if (binding !== null && typeof binding === "object" && !Array.isArray(binding)
-      && (binding as Record<string, unknown>).agent === "pi") {
-      const bound = createAcpxSidecarHostEnvironment(explicitSource, "pi", normalizedSessionId);
-      taskEnvironmentSource = bound;
-      for (const key of piCredentialNames(explicitSource)) {
-        if (bound[key] !== undefined) environment[key] = bound[key];
-      }
-    }
-    Object.assign(environment, githubCredentialEnvironment(explicitSource), configuredEnvironment(taskEnvironmentSource));
+    Object.assign(environment, githubCredentialEnvironment(explicitSource), configuredEnvironment(explicitSource));
   }
   return environment;
 }
@@ -3620,7 +3602,7 @@ export function spawnRunner(options: {
   }
 
   const command = options.runnerBinaryPath ?? runnerBinary;
-  const environment = runnerEnvironment(options.ticket, options.identity.normalizedSessionId, options.environment);
+  const environment = runnerEnvironment(options.ticket, options.environment);
   const withRestart = (handle: RunnerProcessHandle): RunnerProcessHandle => ({
     ...handle,
     restart: (ticket) => spawnRunner({ ...options, ticket }),

@@ -25,7 +25,6 @@ export function acpxBootstrapBlockedError(
   return failure
     ? new Error(
         `ACPX provider bootstrap failed before ${command}: ${failure.message}`,
-        { cause: failure },
       )
     : null;
 }
@@ -131,7 +130,6 @@ const GENERIC_ACPX_OUTPUT_CODES = new Set([
 ]);
 
 const STABLE_ACPX_SIDECAR_CODES = new Set([
-  "ACPX_RUNTIME_PACKAGE_MISSING",
   "COPILOT_POLICY_VIOLATION",
   "COPILOT_DETACHED_WORK_UNSUPPORTED",
   "ACP_MODEL_UNSUPPORTED",

@@ -1,4 +1,3 @@
-import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -15,8 +14,6 @@ import {
   agentWakeupRequests,
   agents,
   companies,
-  authUsers,
-  companyMemberships,
   companySkills,
   createDb,
   closeRegisteredClients,
@@ -345,8 +342,6 @@ async function seedBranchContainmentRun(
     createdAt: now,
     updatedAt: now,
   });
-  await db.insert(authUsers).values({ id: "responsible-user", name: "Fixture user", email: "responsible-user@example.test", createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
-  await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
   await db.insert(projects).values({
     id: projectId,
     companyId,
@@ -885,7 +880,7 @@ describeEmbeddedPostgres("heartbeat workspace branch containment", () => {
       tempDb = await startEmbeddedPostgresTestDatabase("paperclip-branch-containment-");
       db = createDb(tempDb.connectionString);
     }
-  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
+  }, 20_000);
 
   afterEach(async () => {
     // Await every in-flight background heartbeat run to quiescence before the
@@ -923,18 +918,16 @@ describeEmbeddedPostgres("heartbeat workspace branch containment", () => {
     await deleteHeartbeatRunsForCleanup(db);
     await db.delete(issueComments);
     await db.delete(issues);
-    await db.delete(executionWorkspaces);
     await db.delete(projectWorkspaces);
     await db.delete(projects);
     await db.delete(agentWakeupRequests);
     await db.delete(agentRuntimeState);
     await db.delete(agents);
     await db.delete(workspaceOperations);
+    await db.delete(executionWorkspaces);
     await db.delete(environments);
     await db.delete(companySkills);
-    await db.delete(companyMemberships);
     await db.delete(companies);
-    await db.delete(authUsers).where(eq(authUsers.id, "responsible-user"));
     vi.unstubAllEnvs();
   });
 
@@ -979,8 +972,6 @@ describeEmbeddedPostgres("heartbeat workspace branch containment", () => {
     };
     await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
     await db.insert(companies).values({ id: companyId, name: "Retained source", issuePrefix, status: "active", defaultResponsibleUserId: "responsible-user" });
-    await db.insert(authUsers).values({ id: "responsible-user", name: "Fixture user", email: "responsible-user@example.test", createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(projects).values({ id: projectId, companyId, name: "Repository replacement", status: "active",
       executionWorkspacePolicy: { enabled: true, defaultMode: "isolated_workspace", workspaceStrategy: { type: "git_worktree", baseRef: "HEAD" } } });
     await db.insert(projectWorkspaces).values([
@@ -1048,19 +1039,19 @@ describeEmbeddedPostgres("heartbeat workspace branch containment", () => {
       await heartbeat.resumeQueuedRuns();
       const run = await waitForRunToFinish(heartbeat, seeded.runId);
       await heartbeat.waitForRunExecutionDrain(seeded.runId);
-      if (kind === "foreign_company") {
-        expect(run).toMatchObject({ status: "failed", errorCode: "setup_failed", error: "Task workspace access is no longer available" });
-      } else {
-        expect(run).toMatchObject({ status: "failed", errorCode: "workspace_validation_failed" });
-        expect(run?.resultJson).toMatchObject({ workspaceValidation: { reason: "persisted_workspace_source_conflict",
-          reasonCode: kind === "explicit_conflict" ? "explicit_project_workspace_conflict" : "source_registration_unproven" } });
-      }
+      expect(run).toMatchObject({ status: "failed", errorCode: "workspace_validation_failed" });
+      expect(run?.resultJson).toMatchObject({ workspaceValidation: { reason: "persisted_workspace_source_conflict",
+        reasonCode: kind === "explicit_conflict" ? "explicit_project_workspace_conflict"
+          : kind === "unproven" ? "source_registration_unproven" : "source_scope_mismatch" } });
       expect(adapterExecute).not.toHaveBeenCalled();
       const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, seeded.executionWorkspaceId));
       expect(workspace).toMatchObject({ projectWorkspaceId: null, cwd: seeded.worktree, providerRef: seeded.worktree, branchName: seeded.branch, metadata: seeded.metadata });
       const [issue] = await db.select().from(issues).where(eq(issues.id, seeded.issueId));
       expect(issue).toMatchObject({ executionWorkspaceId: seeded.executionWorkspaceId,
         projectWorkspaceId: kind === "explicit_conflict" ? seeded.newWorkspaceId : null });
+      // Intentionally malformed cross-company/project FKs also prevent the
+      // existing issue-update service from changing status. The source gate
+      // still must fail before dispatch and may never silently repair that FK.
       if (kind === "explicit_conflict" || kind === "unproven") expect(issue.status).toBe("blocked");
       expect(await readFile(path.join(seeded.worktree, "retained.txt"), "utf8")).toBe("unexported original task edits\n");
       expect(await readFile(path.join(seeded.replacement, "replacement.txt"), "utf8")).toBe("replacement source must stay untouched\n");
@@ -1082,8 +1073,6 @@ describeEmbeddedPostgres("heartbeat workspace branch containment", () => {
       status: "active",
       defaultResponsibleUserId: "responsible-user",
     });
-    await db.insert(authUsers).values({ id: "responsible-user", name: "Fixture user", email: "responsible-user@example.test", createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,

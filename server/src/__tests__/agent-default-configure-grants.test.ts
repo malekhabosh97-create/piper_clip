@@ -1,4 +1,3 @@
-import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -51,7 +50,7 @@ describeDatabase("new agent configuration defaults", () => {
       issuePrefix: `PD${companyId.slice(0, 6).toUpperCase()}`,
     });
     const create = (name: string, permissions: Record<string, unknown> = {}, metadata?: Record<string, unknown>) =>
-      createAgentLifecycle(db).requestHire(companyId, {
+      agentService(db).create(companyId, {
         name,
         role: "engineer",
         adapterType: "process",
@@ -131,7 +130,6 @@ describeDatabase("new agent configuration defaults", () => {
     expect(await db.select().from(principalPermissionGrants)
       .where(eq(principalPermissionGrants.principalId, standard.id))).toEqual([]);
 
-    await db.update(agents).set({ status: "terminated", lifecycleState: "terminated" }).where(eq(agents.id, peer.id));
     await agentService(db).remove(peer.id);
     expect(await db.select().from(principalPermissionGrants)
       .where(eq(principalPermissionGrants.principalId, peer.id))).toEqual([]);
@@ -192,7 +190,7 @@ describeDatabase("new agent configuration defaults", () => {
       name: "Pending permission default",
       issuePrefix: `PP${companyId.slice(0, 6).toUpperCase()}`,
     });
-    const pending = await createAgentLifecycle(db).requestHire(companyId, {
+    const pending = await agentService(db).create(companyId, {
       name: "Pending hire",
       status: "pending_approval",
       role: "engineer",
@@ -203,7 +201,7 @@ describeDatabase("new agent configuration defaults", () => {
     expect(await db.select().from(principalPermissionGrants)
       .where(eq(principalPermissionGrants.companyId, companyId))).toEqual([]);
 
-    const result = await createAgentLifecycle(db).approveHire(pending.id);
+    const result = await agentService(db).activatePendingApproval(pending.id);
     expect(result?.activated).toBe(true);
     expect((await db.select().from(principalPermissionGrants)
       .where(eq(principalPermissionGrants.companyId, companyId)))
@@ -222,7 +220,7 @@ describeDatabase("new agent configuration defaults", () => {
       name: "Invited permission default",
       issuePrefix: `PI${companyId.slice(0, 6).toUpperCase()}`,
     });
-    const invited = await createAgentLifecycle(db).requestHire(companyId, {
+    const invited = await agentService(db).create(companyId, {
       name: "Invited agent",
       role: "engineer",
       adapterType: "process",

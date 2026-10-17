@@ -221,13 +221,7 @@ function normalizeInboxCollectionViewState(value: unknown): StreamlinedInboxView
         ? category
         : "everything",
     allApprovalFilter: approval === "actionable" || approval === "resolved" ? approval : "all",
-    issueFilters: {
-      ...normalizeIssueFilterState(candidate.issueFilters),
-      // The filter menu no longer offers Workspace. Drop a saved selection so
-      // it cannot keep hiding tasks. A task-link workspace query is applied
-      // by the task list after this load.
-      workspaces: [],
-    },
+    issueFilters: normalizeIssueFilterState(candidate.issueFilters),
     showDateGroupSeparators: candidate.showDateGroupSeparators !== false,
   };
 }
@@ -1114,19 +1108,17 @@ function StreamlinedInbox({
       ...queryKeys.issues.search(selectedCompanyId!, normalizedSearchQuery, undefined, 25),
       "compact",
       "inbox-supplement",
-      issueFilters.showAgentCreatedTasks,
       "live-descendant-summary",
     ],
     queryFn: () =>
       issuesApi.listCompact(selectedCompanyId!, {
         q: normalizedSearchQuery,
         limit: 25,
-        includeAgentCreatedTasks: issueFilters.showAgentCreatedTasks,
-        includeParticipatedTasks: true,
         includeRoutineExecutions: true,
         includeLiveDescendantSummary: true,
       }).then((rows) => rows as Issue[]),
     enabled: shouldUseIssueSearchSupplement,
+    placeholderData: (previousData) => previousData,
   });
   const liveIssueIds = useMemo(
     () => collectLiveIssueIds(liveRuns, [
@@ -1157,11 +1149,11 @@ function StreamlinedInbox({
     externalObjectSummariesReady: externalObjectSummariesReady && !externalObjectSummariesLoading,
   }), [externalObjectSummariesLoading, externalObjectSummariesReady, externalObjectSummaryByIssueId]);
   const visibleMineIssues = useMemo(
-    () => applyIssueFilters(mineIssues, issueFilters, currentUserId, false, liveIssueIds, issueFilterContext),
+    () => applyIssueFilters(mineIssues, issueFilters, currentUserId, true, liveIssueIds, issueFilterContext),
     [mineIssues, issueFilters, currentUserId, liveIssueIds, issueFilterContext],
   );
   const visibleTouchedIssues = useMemo(
-    () => applyIssueFilters(touchedIssues, issueFilters, currentUserId, false, liveIssueIds, issueFilterContext),
+    () => applyIssueFilters(touchedIssues, issueFilters, currentUserId, true, liveIssueIds, issueFilterContext),
     [touchedIssues, issueFilters, currentUserId, liveIssueIds, issueFilterContext],
   );
   const unreadTouchedIssues = useMemo(
@@ -1468,7 +1460,7 @@ function StreamlinedInbox({
         remoteIssues: remoteIssueSearchResults,
         issueFilters,
         currentUserId,
-        enableAgentCreatedVisibilityFilter: false,
+        enableRoutineVisibilityFilter: true,
         liveIssueIds,
         issueFilterContext,
       }),
@@ -2487,9 +2479,10 @@ function StreamlinedInbox({
                 labels={labels?.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
                 currentUserId={currentUserId}
                 enableExternalObjectFilters={externalObjectsEnabled}
-                enableAgentCreatedVisibilityFilter
+                enableRoutineVisibilityFilter
                 buttonVariant="outline"
                 iconOnly
+                workspaces={isolatedWorkspacesEnabled ? executionWorkspaces.filter((w) => w.mode === "isolated_workspace").map((w) => ({ id: w.id, name: w.name })) : undefined}
                 presentation={streamlinedUiEnabled ? "streamlined" : "legacy"}
               />
               <Popover>
@@ -2592,9 +2585,10 @@ function StreamlinedInbox({
                 labels={labels?.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
                 currentUserId={currentUserId}
                 enableExternalObjectFilters={externalObjectsEnabled}
-                enableAgentCreatedVisibilityFilter
+                enableRoutineVisibilityFilter
                 buttonVariant="outline"
                 iconOnly
+                workspaces={isolatedWorkspacesEnabled ? executionWorkspaces.filter((w) => w.mode === "isolated_workspace").map((w) => ({ id: w.id, name: w.name })) : undefined}
                 presentation={streamlinedUiEnabled ? "streamlined" : "legacy"}
                 inboxScopeFilters={tab === "all" ? {
                   category: allCategoryFilter,

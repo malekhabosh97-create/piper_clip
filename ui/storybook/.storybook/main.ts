@@ -4,9 +4,6 @@ import type { StorybookConfig } from "@storybook/react-vite";
 import tailwindcss from "@tailwindcss/vite";
 import { mergeConfig } from "vite";
 import { storybookAgentAvatarAssets } from "../../../scripts/storybook-agent-avatar-assets.mjs";
-import { generateStorybook } from "../../../scripts/storybook-catalog.mjs";
-
-generateStorybook();
 
 const storybookConfigDir = path.dirname(fileURLToPath(import.meta.url));
 const paperclipInstanceOrigin = (() => {
@@ -19,7 +16,7 @@ const paperclipInstanceOrigin = (() => {
 })();
 
 const config: StorybookConfig = {
-  stories: ["../stories/**/*.stories.@(ts|tsx|mdx)", "../generated/features/*.stories.tsx"],
+  stories: ["../stories/**/*.stories.@(ts|tsx|mdx)"],
   staticDirs: ["../../public", "../public"],
   addons: ["@storybook/addon-docs", "@storybook/addon-a11y"],
   framework: {

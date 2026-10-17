@@ -1340,9 +1340,5 @@ export function questionResponseDeliveryService(
     return counts;
   }
 
-  async function hasPending() {
-    return (await db.select({ id: issueQuestionResponseDeliveries.id }).from(issueQuestionResponseDeliveries)
-      .where(inArray(issueQuestionResponseDeliveries.status, ["pending", "delivering"])).limit(1)).length > 0;
-  }
-  return { deliver, sweepPending, hasPending };
+  return { deliver, sweepPending };
 }

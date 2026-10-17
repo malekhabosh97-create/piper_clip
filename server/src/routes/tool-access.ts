@@ -202,7 +202,7 @@ function normalizeCloudConnectorEnrollmentReturnTo(returnTo?: string | null): st
     const parsed = new URL(returnTo, "http://paperclip.local");
     if (
       parsed.origin !== "http://paperclip.local"
-      || !["/apps/connect", "/apps/chat/connect"].includes(parsed.pathname)
+      || parsed.pathname !== "/apps/connect"
       || parsed.username
       || parsed.password
     ) return null;
@@ -327,7 +327,7 @@ export function toolAccessRoutes(
     }
   }
 
-  function requestLoopbackBaseUrl(req: Request, forInitiation = false) {
+  function requestLoopbackBaseUrl(req: Request) {
     const host = req.get("host")?.trim();
     if (!host) return null;
     try {
@@ -346,7 +346,8 @@ export function toolAccessRoutes(
       // interoperable spelling and retain the browser's exact origin as OAuth
       // state for popup postMessage below.
       if (
-        (forInitiation || (req.method !== "GET" && req.method !== "HEAD"))
+        req.method !== "GET"
+        && req.method !== "HEAD"
         && (options.deploymentMode ?? "local_trusted") === "local_trusted"
         && parsed.protocol === "http:"
         && parsed.hostname !== "localhost"
@@ -413,11 +414,11 @@ export function toolAccessRoutes(
     return null;
   }
 
-  function oauthRedirectUri(req: Request, forInitiation = false) {
+  function oauthRedirectUri(req: Request) {
     const baseUrl = configuredPublicBaseUrl()
       ?? trustedBrowserBaseUrl(req)
       ?? enrolledConnectorBaseUrl(req)
-      ?? requestLoopbackBaseUrl(req, forInitiation);
+      ?? requestLoopbackBaseUrl(req);
     if (!baseUrl) {
       throw unprocessable(
         "This Paperclip needs a browser-reachable HTTPS address (or loopback HTTP) before browser sign-in can start.",
@@ -820,22 +821,7 @@ function connectorEnrollmentPrincipal(req: Request): string {
         : [];
     const vercelConnect = vercelConnectIntegrationStatus();
     const { enableMemoryConnectors } = await instanceSettingsService(db).getExperimental();
-    let oauthCallbackUrl: string | undefined;
-    try {
-      // Setup must display the callback used by its initiating POST. Provider
-      // callbacks themselves retain their exact request-derived redirect URI.
-      oauthCallbackUrl = oauthRedirectUri(req, true);
-    } catch (error) {
-      const details = error instanceof HttpError
-        && error.details
-        && typeof error.details === "object"
-        && !Array.isArray(error.details)
-        ? error.details as Record<string, unknown>
-        : null;
-      if (details?.code !== "oauth_redirect_origin_unsupported") throw error;
-    }
     res.json({
-      ...(oauthCallbackUrl ? { oauthCallbackUrl } : {}),
       capabilities: await describeConnectionCreateCapabilities(req, companyId),
       credentialSources: {
         vercelConnect: {

@@ -6,7 +6,9 @@ import type { Db } from "@paperclipai/db";
 import {
   agentWakeupRequests,
   agents,
-  connectionIntentDeliveries,
+  approvals,
+  issueApprovals,
+  issueThreadInteractions,
   heartbeatRuns,
   issueRecoveryActions,
   issueComments,
@@ -20,8 +22,6 @@ import { evaluateAgentInvokabilityFromDb } from "../../../services/agent-invokab
 import { budgetService, budgetServiceInTransaction } from "../../../services/budgets.js";
 import { isCompletedOnboardingHandoffWake } from "../../../services/chat-completion-delivery.js";
 import { isHeartbeatWakeOnDemandEnabled } from "../../../services/heartbeat-policy.js";
-import { DELIVERY_QUEUES, notifyDeliveryWork } from "../../../services/delivery-work-notifications.js";
-import { connectionContinuationPendingResponse } from "../../../services/satisfied-connection-intents.js";
 import { collectDispositionRepairSourceState } from "../../../services/recovery/disposition-repair.js";
 import { legacyDispositionEpisode, legacyDispositionFingerprint } from "../../../services/recovery/legacy-continuation.js";
 import { appendHeartbeatRunEvent } from "../../../services/heartbeat-run-events.js";
@@ -72,7 +72,6 @@ import { RunDispatchApplicationError } from "../application/types.js";
 type HeartbeatRun = typeof heartbeatRuns.$inferSelect;
 type LoadGateFactsInput = {
   conversationContinuation: boolean;
-  responsibleUserId: string | null;
   runId: string;
   companyId: string;
   agentId: string;
@@ -85,8 +84,6 @@ type LoadGateFactsResult =
   | { agentFound: true; facts: ScheduledRetryFacts }
   | { agentFound: false; issueId: string | null };
 type LoadStalenessFactsInput = {
-  responsibleUserId: string | null;
-  conversationContinuation: boolean;
   runId: string;
   companyId: string;
   agentId: string;
@@ -340,7 +337,6 @@ export function createPostgresRunDispatchAdapter(
       .select({
         id: issues.id,
         companyId: issues.companyId,
-        projectId: issues.projectId,
         status: issues.status,
         assigneeAgentId: issues.assigneeAgentId,
         assigneeUserId: issues.assigneeUserId,
@@ -368,8 +364,19 @@ export function createPostgresRunDispatchAdapter(
     facts.issueExecutionRunId = issue.executionRunId;
     facts.issueCheckoutRunId = issue.checkoutRunId;
     if (input.conversationContinuation) {
-      facts.pendingResponse = await connectionContinuationPendingResponse(dbOrTx as unknown as Db,
-        issue, input.responsibleUserId, input.runId);
+      const [interactions, linkedApprovals] = await Promise.all([
+        dbOrTx.select({ id: issueThreadInteractions.id }).from(issueThreadInteractions).where(and(
+          eq(issueThreadInteractions.companyId, input.companyId),
+          eq(issueThreadInteractions.issueId, issueId), eq(issueThreadInteractions.status, "pending"),
+        )).limit(1),
+        dbOrTx.select({ id: approvals.id }).from(issueApprovals).innerJoin(approvals, and(
+          eq(approvals.id, issueApprovals.approvalId), eq(approvals.companyId, issueApprovals.companyId),
+        )).where(and(
+          eq(issueApprovals.companyId, input.companyId), eq(issueApprovals.issueId, issueId),
+          inArray(approvals.status, ["pending", "revision_requested"]),
+        )).limit(1),
+      ]);
+      facts.pendingResponse = interactions.length > 0 ? "interaction" : linkedApprovals.length > 0 ? "approval" : null;
     }
     facts.reviewParticipant = await readNativeReviewParticipantFacts(dbOrTx, {
       companyId: input.companyId, issueId, agentId: input.agentId,
@@ -457,7 +464,6 @@ export function createPostgresRunDispatchAdapter(
         companyId: run.companyId,
         agentId: run.agentId,
         conversationContinuation: run.runtimeMode === "legacy" && hasConversationContinuationPolicy(run.resultJson),
-        responsibleUserId: run.responsibleUserId,
         contextSnapshot: parseObject(run.contextSnapshot),
         scheduledRetryReason: run.scheduledRetryReason,
         retryReasonOverride: input.retryReasonOverride,
@@ -513,9 +519,6 @@ export function createPostgresRunDispatchAdapter(
     const issueQuery = dbOrTx
       .select({
         id: issues.id,
-        companyId: issues.companyId,
-        projectId: issues.projectId,
-        assigneeUserId: issues.assigneeUserId,
         status: issues.status,
         assigneeAgentId: issues.assigneeAgentId,
         executionRunId: issues.executionRunId,
@@ -597,9 +600,6 @@ export function createPostgresRunDispatchAdapter(
         unresolvedBlockerIssueIds: readiness.unresolvedBlockerIssueIds,
         unresolvedBlockerCount: readiness.unresolvedBlockerCount,
       } : null,
-      pendingResponse: issue && (input.conversationContinuation || context.connectionIntentResolution === "existing_connection")
-        ? await connectionContinuationPendingResponse(dbOrTx as unknown as Db, issue, input.responsibleUserId, input.runId)
-        : null,
       issueFound: issue !== null,
       issueStatus: issue?.status ?? null,
       issueAssigneeAgentId: issue?.assigneeAgentId ?? null,
@@ -770,7 +770,6 @@ export function createPostgresRunDispatchAdapter(
           companyId: run.companyId,
           agentId: run.agentId,
           conversationContinuation: run.runtimeMode === "legacy" && hasConversationContinuationPolicy(run.resultJson),
-          responsibleUserId: run.responsibleUserId,
           contextSnapshot: parseObject(run.contextSnapshot),
           scheduledRetryReason: run.scheduledRetryReason,
           retryReasonOverride: run.scheduledRetryReason,
@@ -882,7 +881,6 @@ export function createPostgresRunDispatchAdapter(
     decision: Extract<ReturnType<typeof decideQueuedRunStaleness>, { stale: true }>,
     expectedStatus: "queued" | "running",
     now: Date,
-    providerDispatchNotStarted = false,
   ): Promise<CancelStaleQueuedRunOutcome> {
       const [row] = await tx
         .update(heartbeatRuns)
@@ -894,9 +892,6 @@ export function createPostgresRunDispatchAdapter(
           resultJson: {
             ...parseObject(run.resultJson),
             stopReason: decision.errorCode,
-            ...(providerDispatchNotStarted && decision.errorCode === "issue_waiting_for_response"
-              ? { preDispatchResponseWait: { version: 1, providerWorkStarted: false } }
-              : {}),
             ...(decision.errorCode === "execution_reconciliation_required"
               ? { executionWait: decision.details }
               : {}),
@@ -930,20 +925,6 @@ export function createPostgresRunDispatchAdapter(
               eq(agentWakeupRequests.companyId, row.companyId),
             ),
           );
-      }
-
-      const context = parseObject(row.contextSnapshot);
-      if (decision.errorCode === "issue_waiting_for_response" && context.connectionIntentResolution === "existing_connection"
-        && context.source === "connection_intent.resolved" && context.interactionKind === "connection_intent"
-        && typeof context.interactionId === "string") {
-        // The partial wake-key uniqueness fence permits another delivery after
-        // this skipped receipt. Rearm atomically so restored access or a later
-        // answer can resume the untouched request after a restart.
-        await tx.update(connectionIntentDeliveries).set({ deliveredAt: null, nextAttemptAt: now }).where(and(
-          eq(connectionIntentDeliveries.companyId, row.companyId),
-          eq(connectionIntentDeliveries.interactionId, context.interactionId),
-        ));
-        await notifyDeliveryWork(tx, DELIVERY_QUEUES.connection);
       }
 
       await tx
@@ -995,8 +976,6 @@ export function createPostgresRunDispatchAdapter(
         runId: run.id,
         companyId: run.companyId,
         agentId: run.agentId,
-        responsibleUserId: run.responsibleUserId,
-        conversationContinuation: run.runtimeMode === "legacy" && hasConversationContinuationPolicy(run.resultJson),
         issueId,
         contextSnapshot,
         scheduledRetryReason: run.scheduledRetryReason,
@@ -1150,7 +1129,6 @@ export function createPostgresRunDispatchAdapter(
           decision,
           input.expectedStatus,
           input.now,
-          true, // This locked gate has not handed off to the provider callback.
         );
         return { dispatched: false as const, cancellation };
       }

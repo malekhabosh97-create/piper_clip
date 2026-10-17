@@ -37,6 +37,7 @@ import {
   resolveWorkspaceAfterLowTrustPreflight,
   resolveRuntimeSessionParamsForWorkspace,
   shouldDeferFollowupWakeForSameIssue,
+  stripHostWorkspaceProvisionForLowTrustSandbox,
   stripWorkspaceRuntimeFromExecutionRunConfig,
   shouldResetTaskSessionForModelChange,
   stripConfiguredModelFromSessionParams,
@@ -48,7 +49,6 @@ import {
   buildAnchorFallbackWorkspaceNotes,
   type ResolvedWorkspaceForRun,
 } from "../services/heartbeat.ts";
-import { stripHostWorkspaceProvision } from "../services/heartbeat/workspaces.js";
 import type { TrustPresetResolution } from "../services/trust-preset-resolver.ts";
 
 const execFile = promisify(execFileCallback);
@@ -250,19 +250,19 @@ function buildIssueAncestryDb(rows: Array<{ id: string; companyId: string; paren
 }
 
 describe("assertGitSensitiveAdapterWorkspaceValid", () => {
-  it("accepts a projectless issue using an authorized persisted source workspace", async () => {
-    await expect(assertGitSensitiveAdapterWorkspaceValid(buildWorkspaceValidationInput({
-      issue: { id: "issue-1", identifier: "PAP-1", projectId: null, projectWorkspaceId: "workspace-1" },
-      resolvedWorkspace: buildResolvedWorkspace({ localPathOnlyWorkspace: true }),
-    }))).resolves.toBeUndefined();
-  });
-
-  it("rejects a configured source without source-project evidence", async () => {
-    const input = buildWorkspaceValidationInput();
-    await expectWorkspaceValidationFailure(buildWorkspaceValidationInput({
-      issue: { id: "issue-1", identifier: "PAP-1", projectId: null, projectWorkspaceId: "workspace-1" },
-      persistedExecutionWorkspace: { ...input.persistedExecutionWorkspace!, projectId: null },
-    }), "missing_project_id", "linked to a project workspace but has no project id");
+  it("rejects a project-workspace-linked issue that is missing its project id before adapter launch", async () => {
+    await expectWorkspaceValidationFailure(
+      buildWorkspaceValidationInput({
+        issue: {
+          id: "issue-1",
+          identifier: "PAP-1",
+          projectId: null,
+          projectWorkspaceId: "workspace-1",
+        },
+      }),
+      "missing_project_id",
+      "linked to a project workspace but has no project id",
+    );
   });
 
   it("rejects a git-sensitive local adapter when effective cwd differs from the persisted workspace cwd", async () => {
@@ -1125,15 +1125,8 @@ describe("requiresPushCapabilityPreflight", () => {
   });
 });
 
-describe("stripHostWorkspaceProvision", () => {
-  it.each(["sandbox", "ssh"])("removes nested and top-level runtime commands immutably for %s", selectedEnvironmentDriver => {
-    const config = { runtimeProvisionCommand: "top-level", workspaceStrategy: { type: "git_worktree", provisionCommand: "host", runtimeProvisionCommand: "nested" } };
-    const original = structuredClone(config);
-    expect(stripHostWorkspaceProvision({ config, skipHostProvision: true }))
-      .toEqual({ workspaceStrategy: { type: "git_worktree" } });
-    expect(config).toEqual(original);
-  });
-  it("removes controller provisioning while retaining unrelated settings", () => {
+describe("stripHostWorkspaceProvisionForLowTrustSandbox", () => {
+  it("removes only the host-side provision command for sandbox-backed low-trust runs", () => {
     const config = {
       workspaceStrategy: {
         type: "git_worktree",
@@ -1146,9 +1139,10 @@ describe("stripHostWorkspaceProvision", () => {
       },
     };
 
-    const result = stripHostWorkspaceProvision({
+    const result = stripHostWorkspaceProvisionForLowTrustSandbox({
       config,
-      skipHostProvision: true,
+      trustPreset: lowTrustResolution(),
+      selectedEnvironmentDriver: "sandbox",
     });
 
     expect(result).not.toBe(config);
@@ -1161,7 +1155,7 @@ describe("stripHostWorkspaceProvision", () => {
     expect(config.workspaceStrategy.provisionCommand).toBe("bash ./scripts/provision-worktree.sh");
   });
 
-  it("strips provision commands when the controller is not the execution target", () => {
+  it("preserves provision commands for standard-trust runs", () => {
     const config = {
       workspaceStrategy: {
         type: "git_worktree",
@@ -1169,13 +1163,14 @@ describe("stripHostWorkspaceProvision", () => {
       },
     };
 
-    expect(stripHostWorkspaceProvision({
+    expect(stripHostWorkspaceProvisionForLowTrustSandbox({
       config,
-      skipHostProvision: true,
-    })).toEqual({ workspaceStrategy: { type: "git_worktree" } });
+      trustPreset: standardTrustResolution(),
+      selectedEnvironmentDriver: "sandbox",
+    })).toBe(config);
   });
 
-  it("preserves provision commands when the server permits controller provisioning", () => {
+  it("preserves provision commands when a low-trust run is not sandbox-backed", () => {
     const config = {
       workspaceStrategy: {
         type: "git_worktree",
@@ -1183,9 +1178,10 @@ describe("stripHostWorkspaceProvision", () => {
       },
     };
 
-    expect(stripHostWorkspaceProvision({
+    expect(stripHostWorkspaceProvisionForLowTrustSandbox({
       config,
-      skipHostProvision: false,
+      trustPreset: lowTrustResolution(),
+      selectedEnvironmentDriver: "local",
     })).toBe(config);
   });
 });
@@ -2472,7 +2468,6 @@ describe("effective run session config freshness", () => {
       workspaceConfig: {
         requestedMode: "shared_workspace",
         effectiveMode: "shared_workspace",
-        issueSettings: null,
         reusableExecutionWorkspaceConfig: null,
         existingExecutionWorkspace: null,
       },
@@ -2481,7 +2476,6 @@ describe("effective run session config freshness", () => {
       workspaceConfig: {
         requestedMode: "shared_workspace",
         effectiveMode: "shared_workspace",
-        issueSettings: { mode: "shared_workspace" },
         reusableExecutionWorkspaceConfig: {
           strategyType: "project_primary",
           workspaceGeneration: 1,

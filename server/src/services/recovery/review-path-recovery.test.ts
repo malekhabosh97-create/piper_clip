@@ -139,20 +139,20 @@ describe("review-path recovery", () => {
     },
   );
 
-  it.each([
-    { wakeReason: ISSUE_REVIEW_PATH_LOST_WAKE_REASON },
-    { reviewPathRecoveryAttempt: 1 },
-  ])("requires escalation when the bounded recovery run also ends pathless (%j)", (contextSnapshot) => {
+  it("does not requeue when the bounded recovery run also ends pathless", () => {
     const decision = decideIssueReviewPathRecovery({
       issueId: "issue-1",
       sourceRunId: "run-2",
       assigneeAgentId: "agent-1",
-      contextSnapshot,
+      contextSnapshot: {
+        wakeReason: ISSUE_REVIEW_PATH_LOST_WAKE_REASON,
+        reviewPathRecoveryAttempt: 1,
+      },
       reviewAttention: stalled,
       existingWake: false,
     });
 
-    expect(decision).toEqual({ kind: "exhausted" });
+    expect(decision).toEqual({ kind: "skip", reason: "bounded review-path recovery already ran" });
   });
 
   it("never wakes a healthy review", () => {

@@ -1,7 +1,6 @@
 import { type CodexUsageBaseline, codexRunUsage } from "./codex-usage-baseline.js";
 import type {
   HarnessRuntimeRequest,
-  HarnessSessionRecoveryOptions,
   HarnessThreadGoal,
   HarnessThreadLineageEntry,
   PersistedHarnessSemanticResult,
@@ -113,7 +112,6 @@ export class CodexSessionState {
   codexUsageBaseline: CodexUsageBaseline | null = null;
   result: PrpStructuredRunResult | null = null;
   resultFingerprint: string | null = null;
-  readonly normalizeReplayPayload?: HarnessSessionRecoveryOptions["normalizeReplayPayload"];
   resultCallId: string | null = null;
   resultTurnId: string | null = null;
   turnStartPending = false;
@@ -160,7 +158,6 @@ export class CodexSessionState {
     resumed: boolean;
     activeTurnId?: string | null;
     semanticResult?: PersistedHarnessSemanticResult | null;
-    normalizeReplayPayload?: HarnessSessionRecoveryOptions["normalizeReplayPayload"];
     terminalTurns?: PersistedHarnessTurnTerminal[];
     codexUsageBaseline?: CodexUsageBaseline;
     dispositionOnlyRecoveryConsumed?: boolean;
@@ -217,7 +214,6 @@ export class CodexSessionState {
         structuredClone(input.opened.lineage),
       );
     }
-    this.normalizeReplayPayload = input.normalizeReplayPayload;
     if (input.semanticResult) {
       const validation = validatePrpStructuredRunResult(
         input.semanticResult.result,

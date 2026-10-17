@@ -125,10 +125,6 @@ vi.mock("../services/issue-assignment-wakeup.js", () => ({
   queueIssueAssignmentWakeup: vi.fn(),
 }));
 
-vi.mock("../services/fast-responses.js", () => ({
-  enqueueFastResponse: vi.fn(async () => undefined),
-}));
-
 function buildApp(routerFactory: (app: express.Express) => void) {
   const app = express();
   app.use(express.json());
@@ -157,7 +153,7 @@ function createProjectApp() {
 
 function createIssueApp() {
   issueServer ??= buildApp((expressApp) => {
-    expressApp.use("/api", issueRoutes({ transaction: async (effect: (tx: unknown) => unknown) => effect({}) } as any, {} as any));
+    expressApp.use("/api", issueRoutes({} as any, {} as any));
   }).listen(0);
   return issueServer;
 }

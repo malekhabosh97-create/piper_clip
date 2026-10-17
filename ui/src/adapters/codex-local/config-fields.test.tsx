@@ -12,7 +12,7 @@ import { CodexLocalConfigFields } from "./config-fields";
 
 beforeAll(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); });
 
-async function renderMarkup(node: ReactNode, expand?: string, inspect?: (container: HTMLElement) => void): Promise<string> {
+async function renderMarkup(node: ReactNode, expand?: string): Promise<string> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -20,16 +20,13 @@ async function renderMarkup(node: ReactNode, expand?: string, inspect?: (contain
   if (expand) await act(async () => {
     container.querySelector(`[aria-label="${expand}"]`)?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   });
-  inspect?.(container);
-  const html = container.innerHTML + Array.from(document.body.children).filter(child => child !== container).map(child => child.outerHTML).join("");
+  const html = document.body.innerHTML;
   await act(async () => root.unmount());
   container.remove();
   return html;
 }
 
-async function renderRunner(config: Record<string, unknown>, expand?: string, inspectOrDot?: ((container: HTMLElement) => void) | boolean): Promise<string> {
-  const openAiDotEnabled = inspectOrDot === true;
-  const inspect = typeof inspectOrDot === "function" ? inspectOrDot : undefined;
+async function renderRunner(config: Record<string, unknown>, expand?: string, openAiDotEnabled = false): Promise<string> {
   return renderMarkup(
     <TooltipProvider>
       <CodexLocalConfigFields
@@ -46,7 +43,7 @@ async function renderRunner(config: Record<string, unknown>, expand?: string, in
         openAiDotEnabled={openAiDotEnabled}
       />
     </TooltipProvider>,
-    expand, inspect,
+    expand,
   );
 }
 
@@ -99,7 +96,7 @@ describe("Paperclip Runner Codex configuration", () => {
     expect(html).not.toContain("Ask for untrusted operations");
   });
 
-  it("offers qualified Claude, Cursor and Pi while keeping Copilot disabled", async () => {
+  it("offers qualified Claude and keeps candidate ACP agents visibly disabled", async () => {
     const html = await renderRunner({
       provider: "acpx",
       acpxAgent: "claude",
@@ -108,38 +105,16 @@ describe("Paperclip Runner Codex configuration", () => {
 
     expect(html).toContain('ACP agents');
     expect(html).toContain("ACP agent");
-    const options = new DOMParser().parseFromString(html, "text/html").querySelectorAll('[role="option"]');
-    expect(Array.from(options, option => ({ label: option.textContent?.trim(), disabled: option.hasAttribute("data-disabled") })))
-      .toEqual(expect.arrayContaining([
-        { label: "Claude", disabled: false }, { label: "Cursor", disabled: false },
-        { label: "Pi", disabled: false }, { label: "GitHub Copilot — qualification pending", disabled: true },
-      ]));
+    expect(html).toContain('aria-label="ACP agent"');
+    expect(html.match(/role="option"[^>]*data-disabled=""/g)).toHaveLength(2);
+    expect(html).toContain('Cursor');
+    expect(html).not.toContain('Cursor — qualification pending');
+    expect(html).toContain('GitHub Copilot — qualification pending');
+    expect(html).toContain('Pi — qualification pending');
     expect(html).not.toContain("Codex via ACPX");
     expect(html).not.toContain("ACPX Codex");
     expect(html).not.toContain("Pi via ACPX");
     expect(html).toContain("Allow Paperclip reads");
-  });
-
-  it.each([undefined, "agent", "plan", "ask"])("displays saved Cursor mode %s", async acpxSessionMode => {
-    const selected = acpxSessionMode ?? "agent";
-    await renderRunner({ provider: "acpx", acpxAgent: "cursor", acpxSessionMode }, undefined, container => {
-      const modes = container.querySelectorAll('[aria-label="Cursor mode"]');
-      expect(modes).toHaveLength(1);
-      expect((modes[0] as HTMLSelectElement).value).toBe(selected);
-    });
-  });
-
-  it.each([undefined, "off", "low", "high", "max"])("displays saved Pi thinking level %s", async piThinkingLevel => {
-    await renderRunner({ provider: "acpx", acpxAgent: "pi", piThinkingLevel }, undefined, container => {
-      const mode = container.querySelector('[aria-label="Pi thinking level"]');
-      expect((mode as HTMLSelectElement).value).toBe(piThinkingLevel ?? "low");
-    });
-  });
-  it("shows unsupported saved Pi level without aliasing it", async () => {
-    expect(await renderRunner({ provider: "acpx", acpxAgent: "pi", piThinkingLevel: "medium" })).toContain("Unsupported saved thinking level");
-  });
-  it.each(["claude", "copilot", "pi"])("does not expose Cursor mode for %s", async acpxAgent => {
-    expect(await renderRunner({ provider: "acpx", acpxAgent })).not.toContain('aria-label="Cursor mode"');
   });
 
   it("falls back to the fail-closed Codex permission mode", async () => {

@@ -73,7 +73,6 @@ export interface CompleteControlPlaneRunInput {
  * runner package never imports the server, UI, or database that sits behind it.
  */
 export interface ControlPlanePort {
-  normalizeReplayPayload?(payload: PrpEvent["payload"]): PrpEvent["payload"];
   openRun(input: OpenControlPlaneRunInput): Promise<void>;
   loadSessionCheckpoint?(): Promise<PersistedNativeSession | null>;
   checkpointSession?(

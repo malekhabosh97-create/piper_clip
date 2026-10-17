@@ -1,13 +1,7 @@
-import { mkdir, mkdtemp, realpath, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { paperclipConfigSchema } from "../../packages/shared/src/config-schema.js";
 import { reserveRunnerE2EDatabasePort } from "./ports.js";
-
-/** Runtime instructions and native filesystem grants must use the same path. */
-export async function createRunnerE2ETemporaryRoot(parent = os.tmpdir()) {
-  return await realpath(await mkdtemp(path.join(parent, "paperclip-runner-e2e-")));
-}
 
 /** Seed only the disposable fixture. Onboarding preserves this validated config
  * and still creates the normal secrets and database. Restarts keep the same DB.

@@ -1,4 +1,3 @@
-import { createAgentLifecycle } from "./agent-lifecycle.js";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -720,7 +719,6 @@ export function buildHostServices(
   const secretsHandler = createPluginSecretsHandler({ db, pluginId });
   const companies = companyService(db);
   const agents = agentService(db);
-  const agentsLifecycle = createAgentLifecycle(db);
   const managedAgents = pluginManagedAgentService(db, {
     pluginId,
     pluginKey,
@@ -3015,14 +3013,14 @@ export function buildHostServices(
         await ensurePluginAvailableForCompany(companyId);
         const agent = await agents.getById(params.agentId);
         requireInCompany("Agent", agent, companyId);
-        return (await agentsLifecycle.pauseAgent(params.agentId)) as Agent;
+        return (await agents.pause(params.agentId)) as Agent;
       },
       async resume(params) {
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
         const agent = await agents.getById(params.agentId);
         requireInCompany("Agent", agent, companyId);
-        return (await agentsLifecycle.resumeAgent(params.agentId)) as Agent;
+        return (await agents.resume(params.agentId)) as Agent;
       },
       async invoke(params) {
         const companyId = ensureCompanyId(params.companyId);

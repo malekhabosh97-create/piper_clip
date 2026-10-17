@@ -18,8 +18,7 @@
         "claude_managed",
         "aws_agentcore",
         "acpx",
-        "openai_dot",
-        "grok_bot"
+        "openai_dot"
       ]
     },
     "driver": {
@@ -29,8 +28,7 @@
         "claude_managed_agents_api",
         "aws_agentcore_harness_api",
         "acpx_runtime",
-        "openai_dot_mcp",
-        "grok_bot_mcp"
+        "openai_dot_mcp"
       ]
     },
     "model": {
@@ -55,8 +53,7 @@
       "enum": [
         "anthropic_managed_agents",
         "aws_bedrock_agentcore_harness",
-        "openai_dot",
-        "grok_bot"
+        "openai_dot"
       ]
     },
     "providerSessionId": {
@@ -148,37 +145,9 @@
     },
     "turnControls": {
       "$ref": "#/$defs/turnControls"
-    },
-    "piThinkingLevel": {
-      "enum": [
-        "off",
-        "low",
-        "high",
-        "max"
-      ]
     }
   },
   "allOf": [
-    {
-      "if": {
-        "required": [
-          "piThinkingLevel"
-        ]
-      },
-      "then": {
-        "properties": {
-          "provider": {
-            "const": "acpx"
-          },
-          "agent": {
-            "const": "pi"
-          }
-        },
-        "required": [
-          "agent"
-        ]
-      }
-    },
     {
       "oneOf": [
         {
@@ -253,19 +222,6 @@
             },
             "driver": {
               "const": "openai_dot_mcp"
-            },
-            "executionKind": {
-              "const": "remote_service"
-            }
-          }
-        },
-        {
-          "properties": {
-            "provider": {
-              "const": "grok_bot"
-            },
-            "driver": {
-              "const": "grok_bot_mcp"
             },
             "executionKind": {
               "const": "remote_service"
@@ -397,38 +353,6 @@
         "properties": {
           "service": {
             "const": "openai_dot"
-          },
-          "model": {
-            "const": null
-          },
-          "providerSessionId": {
-            "const": null
-          },
-          "agentProcessId": {
-            "const": null
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "provider": {
-            "const": "grok_bot"
-          }
-        },
-        "required": [
-          "provider"
-        ]
-      },
-      "then": {
-        "required": [
-          "service",
-          "providerSessionId"
-        ],
-        "properties": {
-          "service": {
-            "const": "grok_bot"
           },
           "model": {
             "const": null

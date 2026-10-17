@@ -493,8 +493,6 @@ export function parseChatProviderLifecycle(
   input: ParseChatProviderLifecycleInput,
 ): ChatProviderLifecycleEffect[] {
   switch (input.provider) {
-    case "speko":
-      return []; // Voice lifecycle is reconciled against persisted sessions.
     case "imessage-photon": return []; // Authenticated gRPC events own lifecycle.
     case "agentmail": return [];
     case "slack":

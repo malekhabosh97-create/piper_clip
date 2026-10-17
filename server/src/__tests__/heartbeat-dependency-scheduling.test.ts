@@ -9,8 +9,6 @@ import {
   agentWakeupRequests,
   companySkills,
   companies,
-  authUsers,
-  companyMemberships,
   createDb,
   documentRevisions,
   documents,
@@ -99,7 +97,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-heartbeat-dependency-scheduling-");
     db = createDb(tempDb.connectionString);
-    await db.insert(authUsers).values({ id: "responsible-user", name: "Fixture owner", email: "owner@example.test", createdAt: new Date(), updatedAt: new Date() });
     heartbeat = heartbeatService(db);
     await ensureIssueRelationsTable(db);
   }, 20_000);
@@ -161,7 +158,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       try {
         await db.transaction(async (tx) => {
           await tx.delete(companySkills);
-          await tx.delete(companyMemberships);
           await tx.delete(companies);
         });
         break;
@@ -203,7 +199,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     await db.insert(companies).values({ id: companyId, name: "Native handoff",
       issuePrefix: `N${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false, defaultResponsibleUserId: "responsible-user" });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({ id: agentId, companyId, name: "Parent", role: "engineer",
       status: "active", adapterType: "codex_local", adapterConfig: {}, permissions: {},
       runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } } });
@@ -270,7 +265,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       issuePrefix: `N${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -360,7 +354,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
   it.each(["onboarding", "ordinary", "cancelled"])("dispatches only a verified completed onboarding report: %s", async kind => {
     const companyId = randomUUID(), agentId = randomUUID(), issueId = randomUUID(), childId = randomUUID();
     await db.insert(companies).values({ id: companyId, name: "Completion", issuePrefix: `R${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}` });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({ id: agentId, companyId, name: "Lead", role: "engineer", status: "active", adapterType: "codex_local",
       adapterConfig: {}, runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } }, permissions: {} });
     await db.insert(issues).values({ id: issueId, companyId, title: "Parent", status: kind === "cancelled" ? "cancelled" : "done",
@@ -397,7 +390,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       issuePrefix: `R${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -494,7 +486,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       requireBoardApprovalForNewAgents: false,
       defaultResponsibleUserId: "responsible-user",
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -750,7 +741,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       issuePrefix: `D${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -884,7 +874,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       requireBoardApprovalForNewAgents: false,
       defaultResponsibleUserId: "responsible-user",
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -1022,7 +1011,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       requireBoardApprovalForNewAgents: false,
       defaultResponsibleUserId: "responsible-user",
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -1223,7 +1211,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       requireBoardApprovalForNewAgents: false,
       defaultResponsibleUserId: "responsible-user",
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -1356,7 +1343,6 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       requireBoardApprovalForNewAgents: false,
       defaultResponsibleUserId: "responsible-user",
     });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,

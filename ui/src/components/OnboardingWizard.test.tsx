@@ -273,16 +273,6 @@ async function flushReact() {
   });
 }
 
-function renderWizardView(root: ReturnType<typeof createRoot>, queryClient: QueryClient) {
-  return act(async () => {
-    root.render(
-      <QueryClientProvider client={queryClient}>
-        <OnboardingWizard />
-      </QueryClientProvider>,
-    );
-  });
-}
-
 const SESSION_USER_ID = "user-b";
 
 function render() {
@@ -432,7 +422,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockAdapterRegistry.list = [{ type: "claude_local" }, { type: "codex_local" }];
       const { root, queryClient } = render();
       const renderTree = () =>
-        renderWizardView(root, queryClient);
+        act(async () => {
+          root.render(
+            <QueryClientProvider client={queryClient}>
+              <OnboardingWizard />
+            </QueryClientProvider>,
+          );
+        });
       await renderTree();
       await flushReact();
       return { root, renderTree };
@@ -520,7 +516,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       ]);
       mockAdapterRegistry.list = [{ type: "claude_local" }, { type: "codex_local" }];
       const { root, queryClient } = render();
-      await renderWizardView(root, queryClient);
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <OnboardingWizard />
+          </QueryClientProvider>,
+        );
+      });
       await flushReact();
 
       const clickText = async (match: (t: string) => boolean) => {
@@ -590,7 +592,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockAdapterRegistry.list = [{ type: "claude_local" }, { type: "codex_local" }];
       const { root, queryClient } = render();
       const renderTree = () =>
-        renderWizardView(root, queryClient);
+        act(async () => {
+          root.render(
+            <QueryClientProvider client={queryClient}>
+              <OnboardingWizard />
+            </QueryClientProvider>,
+          );
+        });
       await renderTree();
       await flushReact();
 
@@ -764,7 +772,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockCompaniesApi.list.mockResolvedValue([]);
 
       const { root, queryClient } = render();
-      await renderWizardView(root, queryClient);
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <OnboardingWizard />
+          </QueryClientProvider>,
+        );
+      });
       await flushReact();
 
       const clickByText = async (match: (text: string) => boolean) => {
@@ -827,8 +841,6 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       expect(document.body.textContent).toContain(
         "No stored Claude login was found for this agent.",
       );
-
-      expect(document.body.textContent).toContain("No working authentication was found");
 
       await act(async () => root.unmount());
     });
@@ -1228,7 +1240,31 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       await act(async () => root.unmount());
     });
 
-    ;
+    it("blocks the hire when the probe reports warn with adapter_auth_missing and no stored login exists", async () => {
+      // The default `beforeEach` mock already rejects with a 404 `ApiError`.
+      mockAgentsApi.testEnvironment.mockResolvedValue({
+        adapterType: "claude_local",
+        status: "warn" as const,
+        checks: [
+          {
+            code: ADAPTER_AUTH_MISSING_CHECK_CODE,
+            level: "warn" as const,
+            message: "No stored Claude login was found for this agent.",
+          },
+        ],
+        testedAt: new Date().toISOString(),
+      });
+      const { root, clickByText } = await openConnectStep();
+
+      await clickByText((t) => isArcPrimary(t));
+
+      expect(mockAgentsApi.hire).not.toHaveBeenCalled();
+      expect(document.body.textContent).toContain(
+        "No working authentication was found",
+      );
+
+      await act(async () => root.unmount());
+    });
 
     it("reads the stored-login status once for each create attempt", async () => {
       mockAgentsApi.getClaudeOAuthTokenStatus.mockReset();
@@ -1285,7 +1321,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
 
     const { container, root, queryClient } = render();
     const renderTree = () =>
-      renderWizardView(root, queryClient);
+      act(async () => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <OnboardingWizard />
+          </QueryClientProvider>,
+        );
+      });
 
     await renderTree();
     await flushReact();
@@ -1352,7 +1394,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     });
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     const companyNameInput = document.querySelector("input") as HTMLInputElement;
@@ -1403,7 +1451,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       );
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     expect(document.querySelector("#onboarding-agent-name")).toBeNull();
@@ -1459,7 +1513,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     ]);
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     // Falls back to the wizard's default first step, not the stale step 4
@@ -1493,7 +1553,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     mockCompaniesApi.list.mockRejectedValue(new Error("company list unavailable"));
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     // It mounts: the companies query sets `retry: false`, and with no
@@ -1532,7 +1598,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     mockCompany.loading = false;
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     expect(localStorage).toHaveBeenCalled();
@@ -1569,7 +1641,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     mockCompaniesApi.list.mockRejectedValue(new Error("refetch failed"));
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     // Mounted rather than blank...
@@ -1611,7 +1689,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     mockCompaniesApi.list.mockRejectedValue(new Error("company list unavailable"));
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     expect(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe(draft);
@@ -1649,7 +1733,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     mockCompaniesApi.list.mockRejectedValue(new Error("refetch failed for the new account"));
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     // Account A's agent name must not appear in account B's wizard.
@@ -1697,7 +1787,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     ]);
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     // Mounted — so this is a real observation, not an unmounted false pass.
@@ -1727,7 +1823,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     );
 
     const { root, queryClient } = render();
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     expect(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)).not.toBeNull();
@@ -1759,7 +1861,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     // B's session: the refetch fails, so A's data is retained.
     mockCompaniesApi.list.mockRejectedValue(new Error("refetch failed"));
 
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     // Mounted, so this observes the real thing rather than an empty document.
@@ -1795,7 +1903,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     });
     mockCompaniesApi.list.mockReturnValue(new Promise(() => {}));
 
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     // Nothing mounted, so nothing could have written over the draft.
@@ -1813,7 +1927,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     const { root, queryClient } = render();
     mockCompaniesApi.list.mockReturnValue(new Promise(() => {}));
 
-    await renderWizardView(root, queryClient);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <OnboardingWizard />
+        </QueryClientProvider>,
+      );
+    });
     await flushReact();
 
     expect(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
@@ -1882,7 +2002,13 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockDialog.onboardingOptions = {};
 
       const { root, queryClient } = render();
-      await renderWizardView(root, queryClient);
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <OnboardingWizard />
+          </QueryClientProvider>,
+        );
+      });
       // The login-panel gate chains several dependent queries (environments,
       // instance settings, environment capabilities, then the auth signal
       // itself), each settling on its own render. One flush is not always
@@ -2926,8 +3052,6 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     it("renders no 'Use saved login' control", async () => {
       mockAgentsApi.getAdapterAuthSignal.mockResolvedValue({ status: "absent" });
       const { root } = await openStep4({ adapterType: "claude_local" });
-      await pickSource(/Claude/);
-      expect(document.body.textContent).toContain("Sign in to Claude then come back and enter authorization code");
       expect(document.body.textContent).not.toContain("Use saved login");
       await act(async () => root.unmount());
     });

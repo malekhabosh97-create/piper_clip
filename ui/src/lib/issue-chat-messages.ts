@@ -53,7 +53,6 @@ export interface IssueChatLinkedRun {
   agentId: string;
   adapterType?: string;
   agentName?: string;
-  responsibleUserId?: string | null;
   createdAt: Date | string;
   startedAt: Date | string | null;
   finishedAt?: Date | string | null;
@@ -599,8 +598,6 @@ function createCommentMessage(args: {
     followUpRequested: comment.followUpRequested === true,
     presentation: comment.presentation ?? null,
     commentMetadata: comment.metadata ?? null,
-    origin: comment.origin ?? "comment",
-    fastResponseRequestId: comment.fastResponseRequestId ?? null,
     deletedAt: comment.deletedAt ? toDate(comment.deletedAt).toISOString() : null,
     deletedByType: comment.deletedByType ?? null,
     deletedByAgentId: comment.deletedByAgentId ?? null,

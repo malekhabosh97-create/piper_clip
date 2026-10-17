@@ -20,9 +20,8 @@ const uploadAttachmentMock = vi.hoisted(() => vi.fn());
 vi.mock("@/api/issues", () => ({
   issuesApi: { uploadAttachment: uploadAttachmentMock },
 }));
-vi.mock("@/hooks/useChatConnectorsEnabled", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@/hooks/useChatConnectorsEnabled")>(),
-  useChatConnectorsEnabled: () => ({ enabled: true, githubEnabled: true, loaded: true }),
+vi.mock("@/hooks/useChatConnectorsEnabled", () => ({
+  useChatConnectorsEnabled: () => ({ enabled: true, loaded: true }),
 }));
 
 vi.mock("@/api/chatEndpoints", () => ({

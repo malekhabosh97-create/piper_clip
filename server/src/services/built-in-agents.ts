@@ -1,4 +1,3 @@
-import { createAgentLifecycle } from "./agent-lifecycle.js";
 import fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -22,7 +21,7 @@ import { approvalService } from "./approvals.js";
 import {
   readBuiltInAgentMarker,
   withBuiltInAgentMarker,
-} from "../lib/built-in-agent-metadata.js";
+} from "./built-in-agent-metadata.js";
 import { companySkillService } from "./company-skills.js";
 import { routineService } from "./routines.js";
 import { accessService } from "./access.js";
@@ -806,7 +805,6 @@ function isBuiltInAgentMarkerConflict(error: unknown): boolean {
 
 export function builtInAgentService(db: Db) {
   const agentSvc = agentService(db);
-  const agentSvcLifecycle = createAgentLifecycle(db);
   const accessSvc = accessService(db);
   const approvalSvc = approvalService(db);
   const instructionsSvc = agentInstructionsService(db);
@@ -1405,8 +1403,8 @@ export function builtInAgentService(db: Db) {
   }
 
   async function ensureBuiltInAgentAssignable(agent: Agent) {
-    if (agent.status !== "paused" || ["preparing", "verifying", "resuming"].includes(agent.lifecycleState ?? "")) return agent;
-    const resumed = await agentSvcLifecycle.resumeAgent(agent.id);
+    if (agent.status !== "paused") return agent;
+    const resumed = await agentSvc.resume(agent.id);
     if (!resumed) throw notFound("Built-in agent not found");
     return resumed as Agent;
   }
@@ -1666,7 +1664,7 @@ export function builtInAgentService(db: Db) {
     const [keep, ...duplicates] = markedRows;
     for (const duplicate of duplicates) {
       const openApproval = await approvalSvc.findOpenHireApprovalForAgent(companyId, duplicate.id);
-      await agentSvcLifecycle.terminateAgent(duplicate.id);
+      await agentSvc.terminate(duplicate.id);
       if (openApproval) {
         await approvalSvc.cancel(
           openApproval.id,
@@ -1726,7 +1724,7 @@ export function builtInAgentService(db: Db) {
     companyId: string,
     key: string,
     input: BuiltInAgentProvisionInput = {},
-    options: { isRaceRetry?: boolean; createdByUserId?: string | null } = {},
+    options: { isRaceRetry?: boolean } = {},
   ) {
     const definition = requireBuiltInAgentDefinition(key);
     await ensureCompany(companyId);
@@ -1787,7 +1785,7 @@ export function builtInAgentService(db: Db) {
       : null;
     let created: Agent;
     try {
-      created = await agentSvcLifecycle.requestHire(companyId, {
+      created = await agentSvc.create(companyId, {
         ...definitionPatch(definition, resolvedInput),
         status: definition.defaultStatus ?? "idle",
         pauseReason: definition.defaultStatus === "paused"
@@ -1800,13 +1798,13 @@ export function builtInAgentService(db: Db) {
         permissions: definition.defaultPermissions ?? {},
         spentMonthlyCents: 0,
         lastHeartbeatAt: null,
-      }, { allowBuiltInAgentMetadata: true, createdByUserId: options.createdByUserId ?? null }) as Agent;
+      }, { allowBuiltInAgentMetadata: true }) as Agent;
     } catch (error) {
       // Lost the provisioning race: a concurrent writer inserted the row first
       // and the partial unique index rejected ours. Re-run once; the winning
       // row now exists, so we take the update path instead of inserting again.
       if (!options.isRaceRetry && isBuiltInAgentMarkerConflict(error)) {
-        return ensure(companyId, key, input, { isRaceRetry: true, createdByUserId: options.createdByUserId });
+        return ensure(companyId, key, input, { isRaceRetry: true });
       }
       throw error;
     }
@@ -1839,7 +1837,7 @@ export function builtInAgentService(db: Db) {
     const definition = requireBuiltInAgentDefinition(key);
     const company = await ensureCompany(companyId);
     if (!company.requireBoardApprovalForNewAgents) {
-      return { state: await ensure(companyId, key, input, { createdByUserId: actor.requestedByUserId ?? null }), approval: null };
+      return { state: await ensure(companyId, key, input), approval: null };
     }
     await assertKnownBuiltInAgentModel(definition, input);
 
@@ -1892,7 +1890,7 @@ export function builtInAgentService(db: Db) {
       : null;
     let pending: Agent;
     try {
-      pending = await agentSvcLifecycle.requestHire(companyId, {
+      pending = await agentSvc.create(companyId, {
         ...definitionPatch(definition, input),
         status: "pending_approval",
         reportsTo,
@@ -1901,7 +1899,7 @@ export function builtInAgentService(db: Db) {
         permissions: definition.defaultPermissions ?? {},
         spentMonthlyCents: 0,
         lastHeartbeatAt: null,
-      }, { allowBuiltInAgentMetadata: true, createdByUserId: actor.requestedByUserId ?? null }) as Agent;
+      }, { allowBuiltInAgentMetadata: true }) as Agent;
     } catch (error) {
       // Lost the provisioning race: a concurrent writer inserted the row (and
       // its own hire approval) first, and the partial unique index rejected

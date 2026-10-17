@@ -1,4 +1,3 @@
-import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import type { NativeExecutionInput } from "../contracts/native-execution.js";
 import type { NativeSessionBackend } from "../contracts/native-session-backend.js";
 import {
@@ -15,7 +14,7 @@ import {
 
 export interface CodexAcpxNativeSessionBackendOptions extends Omit<
   CodexAcpxDriverOptions,
-  "model" | "permissionMode" | "mode" | "piThinkingLevel" | "systemInstructions" | "providerPolicy" | "runtimeContext"
+  "model" | "permissionMode" | "mode" | "systemInstructions" | "providerPolicy" | "runtimeContext"
 > {}
 
 export type AcpxNativeSessionBackendOptions =
@@ -59,7 +58,6 @@ export function createAcpxNativeSessionBackend(
     throw new Error("ACPX candidate direct execution requires completed qualification; use the host-controlled runnerd evaluation path");
   }
 
-  resolvePiThinkingLevel(input.provider.agent, input.provider.piThinkingLevel);
   const constraints = nativeTaskConstraints(input);
   const systemInstructions = [
     nativeSystemInstructions(input),
@@ -75,7 +73,6 @@ export function createAcpxNativeSessionBackend(
       model: input.provider.model,
       permissionMode: input.provider.permissionMode ?? "approve-reads",
       mode: input.provider.mode,
-      piThinkingLevel: input.provider.piThinkingLevel,
       systemInstructions,
       runtimeContext: "runtimeContext" in input ? input.runtimeContext : null,
       providerPolicy: { readOnly: "executionMode" in input && input.executionMode === "plan" },

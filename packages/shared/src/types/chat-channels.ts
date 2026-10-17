@@ -1,10 +1,3 @@
-import type { TaskWorkspaceSelection } from "./task-workspace.js";
-
-export interface ChatExecutionDefaults {
-  projectId?: string | null;
-  workspace?: TaskWorkspaceSelection | null;
-}
-
 /** Provider-neutral contracts for Paperclip's native external chat subsystem. */
 export const CHAT_PROVIDERS = [
   "slack",
@@ -12,7 +5,6 @@ export const CHAT_PROVIDERS = [
   "discord",
   "microsoft-teams",
   "telegram",
-  "speko",
   "agentmail",
   "imessage-photon",
 ] as const;
@@ -166,7 +158,6 @@ export interface ChatEndpointBehaviorPolicy {
   /** Defaults to queue and is not exposed in the initial settings UI. */
   concurrency: ChatConcurrencyPolicy;
   allowDirectMessages: boolean;
-  requireAtMention: boolean;
   allowGroupChats: boolean;
   allowUnlinkedPeople: boolean;
 }
@@ -197,30 +188,18 @@ export interface SlackAppConfiguration {
 }
 
 export interface ChatEndpointSetupState {
-  slackSetupMethod?: "managed" | "automatic" | "manual" | "existing";
-  slackManagerError?: string;
+  slackSetupMethod?: "automatic" | "manual" | "existing";
   slackRegistration?: import("../slack-app-manifest.js").SlackRegistrationState;
   /** Provider-confirmed app icon outcome; configuration tokens are never retained. */
   slackAvatar?: import("../slack-app-manifest.js").SlackAvatarState;
   slackAccount?: import("../slack-app-manifest.js").SlackAccountState;
   slackOAuthCallbackUri?: string | null;
   github?: {
-    stage: "setup" | "connect" | "install" | "repositories" | "verify" | "identity" | "behavior" | "test";
+    stage: "connect" | "install" | "repositories" | "verify" | "identity" | "behavior" | "test";
     appSlug?: string;
-    /** Verified by GitHub GET /app, distinct from draft ownership choices. */
-    appOwnerType?: "personal" | "organization";
-    appOwnerLogin?: string;
     installationUrl?: string;
     managementUrl?: string;
     registrationStatus?: "pending" | "completed" | "failed";
-    ownerType?: "personal" | "organization";
-    ownerLogin?: string;
-    appName?: string;
-    cloudRegistrationId?: string;
-    initialRepositoriesImported?: boolean;
-    repositorySelectionSaved?: boolean;
-    initialRepositoryImportPending?: boolean;
-    initialSetupPending?: boolean;
   };
   step: "choose_agent" | "provider_setup" | "test" | "complete";
   /** Server-generated boundary; only provider events at or after this time can complete setup. */
@@ -251,7 +230,6 @@ export type ChannelPublicationMode = "automatic" | "explicit";
 export type ExternalMessageExecutionPolicy = "restricted" | "agent";
 
 export interface ChatEndpoint {
-  executionDefaults?: ChatExecutionDefaults | null;
   /** Additional presentation instructions captured only for newly created tasks. */
   communicationInstructions?: string;
   id: string;
@@ -275,7 +253,6 @@ export interface ChatEndpoint {
   botAvatarUrl?: string | null;
   photonAllocation?: "dedicated" | "shared";
   allowDirectMessages: boolean;
-  requireAtMention: boolean;
   allowGroupChats: boolean;
   allowUnlinkedPeople: boolean;
   replyMode: "subscribed";
@@ -291,7 +268,6 @@ export interface ChatEndpoint {
 }
 
 export interface ChatEndpointResource {
-  executionDefaults?: ChatExecutionDefaults | null;
   id: string;
   companyId: string;
   endpointId: string;
@@ -306,14 +282,6 @@ export interface ChatEndpointResource {
   createdAt: string;
   updatedAt: string;
   participants?: string[];
-}
-
-export interface GitHubRepositoryPage {
-  items: ChatEndpointResource[];
-  nextOffset: number | null;
-  totalCount: number;
-  enabledCount: number;
-  availableCount: number;
 }
 
 export interface ChatExternalPrincipal {
@@ -341,7 +309,6 @@ export interface ChatIdentityLink {
   externalDetail?: string | null;
   paperclipUserId?: string | null;
   paperclipUserLabel?: string | null;
-  paperclipUserImage?: string | null;
   status: ChatIdentityLinkStatus;
   expiresAt?: string | null;
   confirmedAt?: string | null;
@@ -519,16 +486,13 @@ export interface CreateChatEndpointInput {
   applicationId?: string;
   name?: string;
   slackApp?: SlackAppConfiguration;
-  slackSetupMethod?: "managed" | "automatic" | "manual" | "existing";
 }
 
 export interface UpdateChatEndpointInput {
-  executionDefaults?: ChatExecutionDefaults | null;
-  slackSetupMethod?: "managed" | "automatic" | "manual" | "existing";
+  slackSetupMethod?: "automatic" | "manual" | "existing";
   slackApp?: SlackAppConfiguration;
   communicationInstructions?: string;
   allowDirectMessages?: boolean;
-  requireAtMention?: boolean;
   allowGroupChats?: boolean;
   allowUnlinkedPeople?: boolean;
 }

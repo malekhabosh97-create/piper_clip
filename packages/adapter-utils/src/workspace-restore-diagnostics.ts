@@ -15,18 +15,6 @@ const GIT_FAILURE_KINDS = new Set([
   "merge_conflict", "invalid_object", "ref_conflict", "permission_denied", "unknown",
 ] as const);
 type GitFailureKind = typeof GIT_FAILURE_KINDS extends Set<infer T> ? T : never;
-const TRANSFER_STEPS = new Set([
-  "sandbox_access", "sandbox_guard", "file_download", "file_finalize",
-  "archive_create", "archive_download", "archive_validate", "archive_extract",
-] as const);
-type TransferStep = typeof TRANSFER_STEPS extends Set<infer T> ? T : never;
-const TRANSFER_FAILURE_KINDS = new Set([
-  "command_failed", "download_failed", "download_missing", "unsafe_archive",
-  "listing_timeout", "listing_entry_limit", "listing_byte_limit", "listing_line_limit", "listing_stderr_limit",
-] as const);
-type TransferFailureKind = typeof TRANSFER_FAILURE_KINDS extends Set<infer T> ? T : never;
-// Deliberately revalidate the known plugin RPC constants at the persistence boundary.
-const RPC_CODES = new Set([-32000, -32001, -32002, -32003, -32004, -32005, -32006, -32099]);
 export interface WorkspaceRestoreDiagnostic {
   phase: RestorePhase;
   step?: WorkspaceRestoreStep;
@@ -35,16 +23,13 @@ export interface WorkspaceRestoreDiagnostic {
   exitCode?: number;
   gitCommand?: WorkspaceRestoreGitCommand;
   gitFailureKind?: GitFailureKind;
-  transferStep?: TransferStep;
-  transferFailureKind?: TransferFailureKind;
-  rpcCode?: number;
 }
 const ERROR_CODES = new Set([
   "ENOENT", "EACCES", "EPERM", "ENOSPC", "EIO", "EXDEV", "ENOTDIR", "EISDIR",
   "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EAI_AGAIN",
   "ABORT_ERR", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET",
 ]);
-type ErrorDiagnostic = Pick<WorkspaceRestoreDiagnostic, "errorCode" | "httpStatus" | "exitCode" | "transferStep" | "transferFailureKind" | "rpcCode">;
+type ErrorDiagnostic = Pick<WorkspaceRestoreDiagnostic, "errorCode" | "httpStatus" | "exitCode">;
 interface DiagnosticScope {
   active: boolean;
   sequence: number;
@@ -59,14 +44,11 @@ const activeDiagnostic = new AsyncLocalStorage<DiagnosticScope>();
 // Never attach a raw cause to an error just to retain a numeric Git exit code.
 const wrappedDiagnostics = new WeakMap<object, ErrorDiagnostic>();
 const restoreDiagnostics = new WeakMap<object, WorkspaceRestoreDiagnostic>();
-const diagnosticCapture = new AsyncLocalStorage<{
-  restores: WeakMap<object, WorkspaceRestoreDiagnostic>;
-  wrapped: WeakMap<object, ErrorDiagnostic>;
-}>();
+const diagnosticCapture = new AsyncLocalStorage<WeakMap<object, WorkspaceRestoreDiagnostic>>();
 
 /** Keep each settlement's diagnostic receipt isolated across asynchronous work. */
 export function withWorkspaceRestoreDiagnosticCapture<T>(operation: () => Promise<T>): Promise<T> {
-  return diagnosticCapture.run({ restores: new WeakMap(), wrapped: new WeakMap() }, operation);
+  return diagnosticCapture.run(new WeakMap(), operation);
 }
 
 function readField(value: Record<string, unknown>, key: string): unknown {
@@ -126,10 +108,7 @@ function diagnostic(error: unknown): ErrorDiagnostic {
   // SDKs wrap transport errors in a cause. Bound traversal, including cycles.
   for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
     const value = current as Record<string, unknown>;
-    const saved = (diagnosticCapture.getStore()?.wrapped ?? wrappedDiagnostics).get(value);
-    result.transferStep ??= saved?.transferStep;
-    result.transferFailureKind ??= saved?.transferFailureKind;
-    result.rpcCode ??= saved?.rpcCode;
+    const saved = wrappedDiagnostics.get(value);
     const code = saved?.errorCode !== "unknown" && saved?.errorCode !== undefined
       ? saved.errorCode : readField(value, "code");
     if (result.errorCode === "unknown" && typeof code === "string" && ERROR_CODES.has(code)) {
@@ -150,25 +129,12 @@ function diagnostic(error: unknown): ErrorDiagnostic {
 }
 
 /** Retain bounded fields across an existing error wrapper, without a raw cause. */
-export function preserveWorkspaceRestoreErrorDiagnostic<T extends object>(wrapper: T, source: unknown, transferEvidence?: unknown): T {
-  (diagnosticCapture.getStore()?.wrapped ?? wrappedDiagnostics).set(wrapper, { ...diagnostic(source), ...sanitizeTransferEvidence(transferEvidence) });
+export function preserveWorkspaceRestoreErrorDiagnostic<T extends object>(wrapper: T, source: unknown): T {
+  wrappedDiagnostics.set(wrapper, diagnostic(source));
   const scope = activeDiagnostic.getStore();
   const failure = scope?.active ? scope.failures.get(source) : undefined;
   if (failure) scope!.failures.set(wrapper, failure);
   return wrapper;
-}
-
-function sanitizeTransferEvidence(value: unknown): Pick<WorkspaceRestoreDiagnostic, "transferStep" | "transferFailureKind" | "rpcCode"> {
-  if (!value || typeof value !== "object") return {};
-  const record = value as Record<string, unknown>;
-  const step = readField(record, "transferStep");
-  const kind = readField(record, "transferFailureKind");
-  const rpcCode = readField(record, "rpcCode");
-  return {
-    ...(typeof step === "string" && TRANSFER_STEPS.has(step as TransferStep) ? { transferStep: step as TransferStep } : {}),
-    ...(typeof kind === "string" && TRANSFER_FAILURE_KINDS.has(kind as TransferFailureKind) ? { transferFailureKind: kind as TransferFailureKind } : {}),
-    ...(typeof rpcCode === "number" && RPC_CODES.has(rpcCode) ? { rpcCode } : {}),
-  };
 }
 
 /** Decode persisted adapter metadata; never copy arbitrary properties or text. */
@@ -187,7 +153,6 @@ export function sanitizeWorkspaceRestoreDiagnostic(value: unknown): WorkspaceRes
     && typeof gitCommand === "string" && GIT_COMMANDS.has(gitCommand as WorkspaceRestoreGitCommand);
   return {
     phase,
-    ...(step === "workspace_transfer" || step === "asset_restore" ? sanitizeTransferEvidence(record) : {}),
     ...(typeof step === "string" && RESTORE_STEPS.has(step as WorkspaceRestoreStep)
       ? { step: step as WorkspaceRestoreStep } : {}),
     errorCode: typeof code === "string" && ERROR_CODES.has(code) ? code : "unknown",
@@ -203,14 +168,14 @@ export function sanitizeWorkspaceRestoreDiagnostic(value: unknown): WorkspaceRes
 
 export function getWorkspaceRestoreDiagnostic(error: unknown): WorkspaceRestoreDiagnostic | undefined {
   return error && typeof error === "object"
-    ? sanitizeWorkspaceRestoreDiagnostic((diagnosticCapture.getStore()?.restores ?? restoreDiagnostics).get(error)) : undefined;
+    ? sanitizeWorkspaceRestoreDiagnostic((diagnosticCapture.getStore() ?? restoreDiagnostics).get(error)) : undefined;
 }
 
 /** Preserve the scheduler-selected task's snapshot when errors share identity. */
 export function recordWorkspaceRestoreDiagnostic(error: unknown, diagnostic: WorkspaceRestoreDiagnostic | undefined): void {
   const safe = sanitizeWorkspaceRestoreDiagnostic(diagnostic);
   if (error && typeof error === "object") {
-    const receipts = diagnosticCapture.getStore()?.restores ?? restoreDiagnostics;
+    const receipts = diagnosticCapture.getStore() ?? restoreDiagnostics;
     if (safe) receipts.set(error, safe);
     else receipts.delete(error);
   }
@@ -264,10 +229,10 @@ export async function withWorkspaceRestoreDiagnostics<T>(
     } catch (error) {
       const failure = scope.failures.get(error);
       const step = failure?.step;
-      const fields = sanitizeWorkspaceRestoreDiagnostic({ phase, ...(step ? { step } : {}), ...diagnostic(error),
+      const fields = { phase, ...(step ? { step } : {}), ...diagnostic(error),
         ...(phase === "workspace" && step === "git_integration" && failure?.gitCommand
           ? { gitCommand: failure.gitCommand, gitFailureKind: failure.gitFailureKind } : {}),
-      })!;
+      };
       recordWorkspaceRestoreDiagnostic(error, fields);
       if (parent?.active && step) parent.failures.set(error, { ...failure, sequence: ++parent.sequence, step });
       try {

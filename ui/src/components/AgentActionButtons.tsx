@@ -241,7 +241,7 @@ export function AgentActionButtons({
 
   const resolvedCompanyId = companyId ?? agent.companyId;
   const canonicalAgentRef = agentRouteRef(agent);
-  const isPaused = agent.lifecycleState ? agent.lifecycleState === "paused" : agent.status === "paused";
+  const isPaused = agent.status === "paused";
   const isError = agent.status === "error";
 
   const reportError = useCallback(
@@ -282,8 +282,6 @@ export function AgentActionButtons({
       onActionError?.(null);
       invalidateAgent();
       if (action === "terminate") {
-        const state = (data as Agent).lifecycleState;
-        if (state === "terminating" || state === "cleaning_up") return;
         if (!confirmLateNavigationChanges(agentActionStartedDirtyRef)) return;
         onTerminateSuccess?.(data as Agent);
       }
@@ -371,9 +369,8 @@ export function AgentActionButtons({
 
   const isPendingApproval = agent.status === "pending_approval";
   const disabled = actionsDisabled || agentAction.isPending || providerTraceAction.isPending;
-  const assignAndRunDisabled = disabled || isPendingApproval || workActionsDisabled || agent.status === "terminated";
-  const pauseResumeDisabled = disabled || isPendingApproval || (isPaused && workActionsDisabled)
-    || Boolean(agent.lifecycleState && ["pausing", "terminating", "cleaning_up", "terminated", "rejected"].includes(agent.lifecycleState));
+  const assignAndRunDisabled = disabled || isPendingApproval || workActionsDisabled;
+  const pauseResumeDisabled = disabled || isPendingApproval || (isPaused && workActionsDisabled);
   const clearErrorDisabled = disabled;
   const runtimeConfig = agent.runtimeConfig as Record<string, unknown> | null;
   const runtimeDebug =

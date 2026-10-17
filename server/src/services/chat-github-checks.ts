@@ -240,11 +240,6 @@ export function githubReviewCheckService(db: Db, fetchImpl = fetch) {
               : state === "queued"
                 ? "queued"
                 : "completed";
-          const policy = review?.policySnapshot ?? {
-            ...source.configuration.defaults,
-            ...source.configuration.repositories[event.repositoryId],
-          };
-          const conclusion = policy.ratingThreshold === null ? "neutral" : "action_required";
           const title =
             state === "manual_required"
               ? "Authorized manual review required"
@@ -342,7 +337,7 @@ export function githubReviewCheckService(db: Db, fetchImpl = fetch) {
                   ...(detailsUrl ? { details_url: detailsUrl } : {}),
                   status,
                   ...(status === "completed"
-                    ? { conclusion }
+                    ? { conclusion: "action_required" }
                     : {}),
                   output: {
                     title,
@@ -361,7 +356,7 @@ export function githubReviewCheckService(db: Db, fetchImpl = fetch) {
                     checkId: String(posted.id),
                     checkUrl: posted.html_url,
                     ...(terminal
-                      ? { conclusion }
+                      ? { conclusion: "action_required" as const }
                       : {}),
                     updatedAt: new Date(),
                   })

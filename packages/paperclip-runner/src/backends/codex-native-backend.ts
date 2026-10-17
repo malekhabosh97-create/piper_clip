@@ -11,7 +11,7 @@ import type {
 import type { CodexAppServerTransport } from "../drivers/codex/app-server-transport.js";
 import { CodexAppServerDriver } from "../drivers/codex/codex-app-server-driver.js";
 import type { CodexWorkingDirectoryAuthority } from "../drivers/codex/codex-boundaries.js";
-import { describeRunnerdExternalBotDriver } from "../drivers/dot/runnerd-dot-driver.js";
+import { describeRunnerdDotDriver } from "../drivers/dot/runnerd-dot-driver.js";
 import { HarnessDriverBackend } from "./harness-driver-backend.js";
 import {
   nativeSystemInstructions,
@@ -31,7 +31,6 @@ export interface CodexNativeSessionBackendOptions {
     startedAt: string;
   }) => Promise<void>;
   transportFactory?: (context?: {
-    baseInstructions?: string;
     providerRecoveryPolicy?: PersistedNativeSession["providerRecoveryPolicy"];
     persistedSession?: Pick<
       PersistedHarnessSession,
@@ -144,8 +143,6 @@ function createTransportBackedNativeSessionBackend(
     ...nativeTaskConstraints(input),
   ];
 
-  const baseInstructions = nativeSystemInstructions(input);
-  const transportFactory = options.transportFactory;
   return new HarnessDriverBackend(
     new CodexAppServerDriver({
       ...(input.provider.model ? { model: input.provider.model } : {}),
@@ -158,7 +155,7 @@ function createTransportBackedNativeSessionBackend(
         input.provider.kind === "codex"
           ? (input.provider.approvalPolicy ?? "never")
           : "never",
-      baseInstructions,
+      baseInstructions: nativeSystemInstructions(input),
       instructionWorkingCopyRoot: "runtimeContext" in input ? input.runtimeContext.instructions.workingCopy?.rootPath : undefined,
       includeSkillInstructions: isCodex && "runtimeContext" in input,
       skillInputs: isCodex
@@ -181,9 +178,7 @@ function createTransportBackedNativeSessionBackend(
       runnerInstanceId:
         options.runnerInstanceId ?? `paperclip-native-${input.binding.runId}`,
       onSpawn: options.onSpawn,
-      transportFactory: transportFactory
-        ? (context) => transportFactory({ ...context, baseInstructions })
-        : undefined,
+      transportFactory: options.transportFactory,
       dynamicTools: options.dynamicTools,
       dynamicToolHandler: options.dynamicToolHandler,
       completionFeedback: options.completionFeedback,
@@ -209,8 +204,8 @@ export function describeRunnerdNativeSessionBackend(
   input: NativeExecutionInput,
 ): Promise<NativeSessionBackendDescriptor> {
   if (input.schema === "paperclip.native-execution-input.v6") {
-    // External bots use the shared Rust bridge and retain their provider identity.
-    const descriptor = describeRunnerdExternalBotDriver(input.provider.kind);
+    // Dot uses its dedicated Rust bridge, rather than the JSON-RPC facade.
+    const descriptor = describeRunnerdDotDriver();
     return Promise.resolve({
       kind: "runner",
       name: descriptor.kind,

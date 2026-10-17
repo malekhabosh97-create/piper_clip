@@ -57,15 +57,6 @@ that an earlier failed collection discarded.
 
 ## Required remote restore failures
 
-The copy-back first repairs itself. While the run still holds its merge
-baseline, a workspace copy-back that fails before writing any host file is
-retried up to three times in total, with a short backoff. This covers dropped
-transfers, provider errors, and a merge lock held by another restore. An unsafe
-archive, a permission failure, or any failure after the merge started writing
-host files is never retried. Only a copy-back that still fails reaches the
-repair hold below. Adapter environment Tests restore into a throwaway temp
-workspace, so they opt out of these retries and report a failure at once.
-
 When a legacy sandbox run cannot copy required workspace files back, the server
 keeps the original allocation for repair. It writes the failed run, the exact
 lease retention intent, and a board-owned repair hold in one transaction. The
@@ -90,18 +81,10 @@ Only a board operator can record this repair. It preserves the current task
 owner, conversation generation, status, and execution locks. It does not queue a
 continuation or replay the stopped run; after repair, any new work still follows
 the normal admission rules.
-The original legacy run may be `succeeded` while required files still need
-repair. Verified file-only repair accepts that terminal result and keeps it
-unchanged. It still requires the retained-source record, exact remote stop
-receipts, and recovered-file evidence. A successful result does not permit a
-normal execution retry, and a queued or running source cannot be repaired this
-way. Later saved messages can continue through ordinary admission after the
-file hold clears.
-The board shows repair guidance, an Inspect run link, and a Record file recovery
-form for operators with runtime access. The form requires recovered-file evidence
-and confirmation; the API verifies the original stop receipts. The operator API
-also supports this workflow and returns the exact action and lease IDs. Provider
-access may require an instance administrator or Cloud support.
+The board currently shows repair guidance and an Inspect run link, not a repair
+form. Recording the decision is an operator API/runbook workflow; the recovery
+API response contains the exact action and lease IDs. Provider access may require
+an instance administrator or Cloud support. This change does not add a repair UI.
 Then use the provider's operator console to remove that exact retained
 allocation when its files are no longer needed. Verify its immutable provider
 allocation ID against the recorded lease before removal. The ordinary reusable

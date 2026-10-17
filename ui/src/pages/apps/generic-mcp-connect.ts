@@ -42,11 +42,7 @@ export function endpointHost(url: string): string | null {
  * they point at the same machine. The API therefore uses `localhost` for local
  * HTTP OAuth, so the setup form must advertise that same canonical spelling.
  */
-export function oauthCallbackUrlForBrowser(
-  origin: string = window.location.origin,
-  serverCallbackUrl?: string,
-): string {
-  if (serverCallbackUrl) return serverCallbackUrl;
+export function oauthCallbackUrlForBrowser(origin: string = window.location.origin): string {
   const callbackUrl = new URL("/api/tools/oauth/callback", origin);
   const hostname = callbackUrl.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (

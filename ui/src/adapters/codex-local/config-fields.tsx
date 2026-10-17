@@ -1,6 +1,5 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { AdapterMark } from "../../components/AdapterMark";
-import { GrokBotConnection } from "../../components/GrokBotConnection";
 import { DotRunnerConnection } from "../../components/DotRunnerConnection";
 import { configFieldsForSection } from "../config-sections";
 import type { AdapterConfigFieldsProps } from "../types";
@@ -202,7 +201,7 @@ export function CodexLocalConfigFields({
           </select>
         </Field>
       )}
-      {runnerManaged && runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && (
+      {runnerManaged && runnerProvider !== "openai_dot" && (
         <Field configSection="adapter"
           label="Harness"
           hint="Choose the agent harness that runs your tasks."
@@ -233,14 +232,12 @@ export function CodexLocalConfigFields({
                     ...values!.adapterSchemaValues,
                     provider,
                     acpxSessionMode: undefined,
-                    piThinkingLevel: undefined,
                     ...(provider === "acpx" ? { acpxAgent: grok ? "grok" : "claude" } : {}),
                   },
                 });
               } else {
                 mark("adapterConfig", "provider", provider);
                 mark("adapterConfig", "acpxSessionMode", undefined);
-                mark("adapterConfig", "piThinkingLevel", undefined);
                 mark("adapterConfig", "model", model);
                 if (provider === "openai_dot") {
                   mark("adapterConfig", "lifecycleMode", "per_turn");
@@ -264,7 +261,6 @@ export function CodexLocalConfigFields({
           </Select>
         </Field>
       )}
-      {runnerManaged && runnerProvider === "grok_bot" && <GrokBotConnection companyId={companyId} agentId={agentId} />}
       {runnerManaged && runnerProvider === "openai_dot" && <>
         <Field configSection="adapter" label="Dot connection" hint="A verified event round trip is required before assigning work.">
           <DotRunnerConnection companyId={companyId} agentId={agentId} bindingId={String(runnerSchemaValue("dotBindingId", ""))} onBinding={id => updateRunnerSchemaValue("dotBindingId", id)} />
@@ -277,17 +273,16 @@ export function CodexLocalConfigFields({
           checked={runnerSchemaValue("allowUnmeteredProvider", false) === true} onChange={value => updateRunnerSchemaValue("allowUnmeteredProvider", value)} />
       </>}
       {runnerManaged && runnerProvider === "acpx" && runnerSchemaValue("acpxAgent", "claude") !== "grok" && (
-        <Field configSection="adapter" label="ACP agent" hint="Cursor uses Paperclip questions; per-run cost is unavailable. Pi accepts any provider/model ID. GitHub Copilot awaits qualification.">
+        <Field configSection="adapter" label="ACP agent" hint="Cursor uses Paperclip questions; per-run cost is unavailable. GitHub Copilot and Pi await qualification.">
           <Select
             value={String(isCreate ? values!.adapterSchemaValues?.acpxAgent ?? "claude" : eff("adapterConfig", "acpxAgent", config.acpxAgent ?? "claude"))}
             onValueChange={(value) => {
               const profile = PAPERCLIP_RUNNER_ACPX_PROFILES.find(entry => entry.value === value);
               const acpxSessionMode = profile?.value === "cursor" ? "agent" : undefined;
-              const piThinkingLevel = profile?.value === "pi" ? "low" : undefined;
               if (!profile?.qualified) return;
               if (isCreate) set!({ model: profile.value === "claude" ? defaultAcpxClaudeModel : "",
-                adapterSchemaValues: { ...values!.adapterSchemaValues, acpxAgent: profile.value, acpxSessionMode, piThinkingLevel } });
-              else { mark("adapterConfig", "acpxAgent", profile.value); mark("adapterConfig", "acpxSessionMode", acpxSessionMode); mark("adapterConfig", "piThinkingLevel", piThinkingLevel); mark("adapterConfig", "model", profile.value === "claude" ? defaultAcpxClaudeModel : ""); }
+                adapterSchemaValues: { ...values!.adapterSchemaValues, acpxAgent: profile.value, acpxSessionMode } });
+              else { mark("adapterConfig", "acpxAgent", profile.value); mark("adapterConfig", "acpxSessionMode", acpxSessionMode); mark("adapterConfig", "model", profile.value === "claude" ? defaultAcpxClaudeModel : ""); }
             }}>
             <SelectTrigger className="w-full" aria-label="ACP agent"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -312,15 +307,6 @@ export function CodexLocalConfigFields({
             <option value="agent">Agent</option>
             <option value="plan">Plan</option>
             <option value="ask">Ask</option>
-          </select>
-        </Field>
-      )}
-      {runnerManaged && runnerProvider === "acpx" && runnerSchemaValue("acpxAgent", "claude") === "pi" && (
-        <Field configSection="adapter" label="Pi thinking level" hint="The runner verifies this exact level before each session can prompt. Changing it starts a new session.">
-          <select className={inputClass} aria-label="Pi thinking level" value={String(runnerSchemaValue("piThinkingLevel", "low"))}
-            onChange={(event) => updateRunnerSchemaValue("piThinkingLevel", event.target.value)}>
-            {!["off", "low", "high", "max"].includes(String(runnerSchemaValue("piThinkingLevel", "low"))) && <option value={String(runnerSchemaValue("piThinkingLevel", "low"))} disabled>Unsupported saved thinking level</option>}
-            <option value="off">Off</option><option value="low">Low</option><option value="high">High</option><option value="max">Max</option>
           </select>
         </Field>
       )}
@@ -518,7 +504,7 @@ export function CodexLocalConfigFields({
           )}
         </Field>
       )}
-      {runnerManaged && runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && (
+      {runnerManaged && runnerProvider !== "openai_dot" && (
         <Field configSection="runPolicy"
           label="Runner lifecycle"
           hint="Turn by turn suspends after each run. Warm keeps the same provider process available between governed runs."
@@ -538,7 +524,7 @@ export function CodexLocalConfigFields({
           </select>
         </Field>
       )}
-      {runnerManaged && runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && runnerLifecycleMode === "warm" && (
+      {runnerManaged && runnerProvider !== "openai_dot" && runnerLifecycleMode === "warm" && (
         <Field configSection="runPolicy"
           label="Warm idle timeout (ms)"
           hint="After this much inactivity, runnerd checkpoints and suspends the provider session. The maximum is 24 hours."
@@ -802,7 +788,7 @@ export function CodexLocalConfigFields({
           )}
         </>
       )}
-      {runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && <LocalWorkspaceRuntimeFields
+      {runnerProvider !== "openai_dot" && <LocalWorkspaceRuntimeFields
         isCreate={isCreate}
         values={values}
         set={set}

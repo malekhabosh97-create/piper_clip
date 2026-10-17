@@ -16,7 +16,7 @@ export function canBrowseProjectRepositoryGrant(input: {
 
 export function mergeProjectRepository(
   repositories: Map<string, ProjectRepository>,
-  repo: { id: string; fullName: string; private?: boolean; ownerType?: ProjectRepository["ownerType"] },
+  repo: { id: string; fullName: string; private?: boolean },
   connectionName: string,
   connectionId?: string,
 ) {

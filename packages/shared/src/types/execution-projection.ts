@@ -13,7 +13,6 @@ export interface ExecutionBlocker {
   canRetry?: boolean;
   /** Required workspace files must be recovered before another provider turn. */
   workspaceRepairRequired?: boolean;
-  canRecordWorkspaceRepair?: boolean;
   savedMessageCount?: number;
 }
 

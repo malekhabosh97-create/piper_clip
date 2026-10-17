@@ -275,11 +275,9 @@ function targetLabel(
 ) {
   const target = interaction.payload.target;
   if (!target) return null;
-  // A custom target key is a machine identifier for idempotency and stale
-  // detection (e.g. `github:org/repo:pull:16`), not display copy. Only show a
-  // custom target when the agent supplied a human label.
-  if (target.type === "custom" && !target.label) return null;
-  const label = target.label ?? target.key;
+  const label =
+    target.label ??
+    (target.type === "issue_document" ? target.key : target.key);
   const revision =
     target.revisionNumber == null ? null : `v${target.revisionNumber}`;
   return [label, revision].filter(Boolean).join(" · ");
@@ -761,7 +759,7 @@ function AskUserQuestionsCard({
             const answer = response.answers[question.id];
             const otherText =
               question.answerMode === "text"
-                ? (interaction.payload.questionSet ? answer?.text : answer?.text?.trim())
+                ? answer?.text?.trim()
                 : answer?.customText?.trim();
             return {
               questionId: question.id,
@@ -864,8 +862,8 @@ function ConfirmationCard({
           planDocument={planDocument}
         />
       ) : isPlanConfirmation && rejecting ? null : (
-        <div className="space-y-2">
-          <p className="whitespace-pre-line break-words text-sm leading-5 text-foreground">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="min-w-0 flex-1 text-sm leading-5 text-foreground">
             {isPlanConfirmation
               ? "Do you accept this plan?"
               : interaction.payload.prompt}
@@ -1154,8 +1152,8 @@ function CheckboxConfirmationCard({
 
   return (
     <div>
-      <div className="space-y-2">
-        <p className="whitespace-pre-line break-words text-sm leading-5 text-foreground">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="min-w-0 flex-1 text-sm leading-5 text-foreground">
           {interaction.payload.prompt}
         </p>
         <CompactTarget interaction={interaction} />

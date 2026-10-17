@@ -906,8 +906,6 @@ describe("OpenCodeServerDriver", () => {
     expect(environment.keys).not.toContain("UNRELATED_SECRET");
     expect(environment.keys).not.toContain("PAPERCLIP_PROVIDER_TRACE_PATH");
     expect(environment.projectConfigDisabled).toBe("true");
-    expect(environment.modelsFetchDisabled).toBe("true");
-    expect(environment.defaultPluginsDisabled).toBe("true");
     expect(mcpEvidence.tools).toEqual(
       expect.arrayContaining(["paperclip_finish", "paperclip_block"]),
     );
@@ -920,46 +918,6 @@ describe("OpenCodeServerDriver", () => {
     expect(config).not.toContain("test-openrouter-key");
     expect(diagnostics.join("\n")).not.toContain("test-openrouter-key");
     expect(diagnostics.join("\n")).toContain("[REDACTED]");
-  });
-
-  it.each(["role-first", "role-last", "role-last-long"])("preserves incremental text and completion with identity checks (%s)", async (roleOrder) => {
-    await chmod(fixture, 0o755);
-    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-stream-"));
-    const workspace = await mkdtemp(join(tmpdir(), "paperclip-opencode-stream-workspace-"));
-    roots.push(root, workspace);
-    const driver = new OpenCodeServerDriver({
-      model: "openrouter/deepseek/deepseek-v4-flash-0731",
-      runtimeDirectory: root,
-      command: fixture,
-      environment: { PATH: process.env.PATH },
-    });
-    const session = await driver.openSession({ runId: "stream", normalizedSessionId: "stream", workingDirectory: workspace });
-    try {
-      await session.startTurn({ message: { role: "user", text: `incremental-stream ${roleOrder}` } });
-      const deltas: string[] = [];
-      const reasoning: string[] = [];
-      const events: PrpEvent[] = [];
-      for await (const event of session.events()) {
-        events.push(event);
-        if (event.eventType === "item.delta" && event.payload.kind === "reasoning") reasoning.push(String(event.payload.text));
-        if (event.eventType === "item.delta" && event.payload.kind === "agentMessage") {
-          deltas.push(String(event.payload.text));
-          // The fixture cannot finish its turn until a chunk reaches us.
-          if (deltas.length === 1) {
-            expect(await readFile(join(root, "stream", "data", "stream-released"), "utf8").catch(() => null)).toBeNull();
-          }
-          await writeFile(join(root, "stream", "data", "release-stream"), "ready");
-        }
-        if (TURN_TERMINAL_EVENT_TYPES.has(event.eventType)) break;
-      }
-      const expectedText = `Hi ${"👋".repeat(roleOrder === "role-last-long" ? 120 : 2)}`;
-      expect(deltas).toEqual(roleOrder === "role-first" ? ["Hi ", "👋", "👋"] : [expectedText]);
-      expect(reasoning).toEqual(["Thinking"]);
-      expect(events.filter(event => event.eventType === "item.completed" && event.payload.kind === "agentMessage")
-        .map(event => event.payload.text)).toEqual([expectedText]);
-    } finally {
-      await session.close({ reason: "stream test complete" });
-    }
   });
 
   it("maps OpenCode's normal abort error to cancellation without a false provider failure notice", async () => {
@@ -1539,7 +1497,7 @@ describe("OpenCodeServerDriver", () => {
     await session.close({ reason: "test" });
   });
 
-  it("resends system instructions without repeating the task envelope on recovery", async () => {
+  it("sends only the authoritative wake envelope when resuming an existing provider session", async () => {
     await chmod(fixture, 0o755);
     const root = await mkdtemp(
       join(tmpdir(), "paperclip-opencode-resume-context-"),
@@ -1595,7 +1553,7 @@ describe("OpenCodeServerDriver", () => {
       ],
     });
     expect(submittedPrompt).not.toHaveProperty("tools");
-    expect(submittedPrompt).toHaveProperty("system", "large original system context");
+    expect(submittedPrompt).not.toHaveProperty("system");
     await recovered!.session!.close({ reason: "recovery-test" });
   });
 
@@ -1984,11 +1942,9 @@ describe("OpenCodeServerDriver", () => {
         "*": permissionMode,
         external_directory: { "*": "deny", [`${workspace}/**`]: "allow" },
       });
-      expect(config.autoupdate).toBe(false);
       expect(config.provider.openrouter.models).toHaveProperty(
         "deepseek/deepseek-v4-flash-0731",
       );
-      expect(config.provider.openrouter.models["deepseek/deepseek-v4-flash-0731"].options).toBeUndefined();
       expect(config.permission.paperclip_finish).toBeUndefined();
       expect(config.permission["paperclip_*"]).toBe("allow");
       await session.close({ reason: "permission mode test complete" });
@@ -2484,9 +2440,6 @@ describe("OpenCodeServerDriver", () => {
         afterSpawn: () => {
           commandLifecycle.push("after");
         },
-        afterExit: () => {
-          commandLifecycle.push("exit");
-        },
       },
       fetch: async (input, init) => {
         if (
@@ -2512,31 +2465,9 @@ describe("OpenCodeServerDriver", () => {
     expect(spawns.length).toBeGreaterThanOrEqual(2);
     expect(spawns.length).toBeLessThanOrEqual(3);
     expect(commandLifecycle).toEqual(
-      [...Array.from({ length: spawns.length - 1 }, () => ["before", "after", "exit"]).flat(), "before", "after"],
+      Array.from({ length: spawns.length }, () => ["before", "after"]).flat(),
     );
     await session.close({ reason: "test" });
-    expect(commandLifecycle).toEqual(
-      Array.from({ length: spawns.length }, () => ["before", "after", "exit"]).flat(),
-    );
-  });
-
-  it("releases the executable binding when spawning fails before health checks", async () => {
-    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-spawn-error-"));
-    roots.push(root);
-    const lifecycle: string[] = [];
-    const driver = new OpenCodeServerDriver({
-      model: "openrouter/deepseek/deepseek-v4-flash-0731",
-      runtimeDirectory: root,
-      command: join(root, "missing-executable"),
-      commandLifecycle: {
-        beforeSpawn: () => { lifecycle.push("before"); },
-        afterSpawn: () => { lifecycle.push("spawned"); },
-        afterExit: () => { lifecycle.push("released"); },
-      },
-    });
-    await expect(driver.openSession({ runId: "spawn-error", normalizedSessionId: "spawn-error",
-      workingDirectory: root })).rejects.toThrow("ENOENT");
-    expect(lifecycle).toEqual(["before", "released"]);
   });
 
   it("reports startup exit details with stderr captured after spawn and redacted", async () => {

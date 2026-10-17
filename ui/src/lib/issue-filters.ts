@@ -1,4 +1,4 @@
-import { isAgentCreatedIssue, type ExternalObjectSummary, type Issue } from "@paperclipai/shared";
+import type { ExternalObjectSummary, Issue } from "@paperclipai/shared";
 
 export type IssueFilterWorkspaceLookup = {
   mode?: string | null;
@@ -36,7 +36,7 @@ export type IssueFilterState = {
    *   - `none`           — issues with zero external objects
    */
   externalObjectStatuses: string[];
-  showAgentCreatedTasks: boolean;
+  hideRoutineExecutions: boolean;
 };
 
 export const defaultIssueFilterState: IssueFilterState = {
@@ -49,7 +49,7 @@ export const defaultIssueFilterState: IssueFilterState = {
   workspaces: [],
   liveOnly: false,
   externalObjectStatuses: [],
-  showAgentCreatedTasks: false,
+  hideRoutineExecutions: false,
 };
 
 export const externalObjectFilterOrder = [
@@ -115,7 +115,7 @@ export function normalizeIssueFilterState(value: unknown): IssueFilterState {
     workspaces: normalizeIssueFilterValueArray(candidate.workspaces),
     liveOnly: candidate.liveOnly === true,
     externalObjectStatuses: normalizeIssueFilterValueArray(candidate.externalObjectStatuses),
-    showAgentCreatedTasks: candidate.showAgentCreatedTasks === true,
+    hideRoutineExecutions: candidate.hideRoutineExecutions === true,
   };
 }
 
@@ -210,7 +210,7 @@ export function applyIssueFilters(
   issues: Issue[],
   state: IssueFilterState,
   currentUserId?: string | null,
-  enableAgentCreatedVisibilityFilter = false,
+  enableRoutineVisibilityFilter = false,
   liveIssueIds?: ReadonlySet<string>,
   workspaceContext: IssueFilterWorkspaceContext = {},
 ): Issue[] {
@@ -218,8 +218,8 @@ export function applyIssueFilters(
   if (state.liveOnly) {
     result = result.filter((issue) => liveIssueIds?.has(issue.id) === true);
   }
-  if (enableAgentCreatedVisibilityFilter && !state.showAgentCreatedTasks) {
-    result = result.filter((issue) => !isAgentCreatedIssue(issue));
+  if (enableRoutineVisibilityFilter && state.hideRoutineExecutions) {
+    result = result.filter((issue) => issue.originKind !== "routine_execution");
   }
   if (state.statuses.length > 0) result = result.filter((issue) => state.statuses.includes(issue.status));
   if (state.priorities.length > 0) result = result.filter((issue) => state.priorities.includes(issue.priority));
@@ -269,7 +269,7 @@ export function applyIssueFilters(
 
 export function countActiveIssueFilters(
   state: IssueFilterState,
-  enableAgentCreatedVisibilityFilter = false,
+  enableRoutineVisibilityFilter = false,
 ): number {
   let count = 0;
   if (state.statuses.length > 0) count += 1;
@@ -281,6 +281,6 @@ export function countActiveIssueFilters(
   if (state.workspaces.length > 0) count += 1;
   if (state.liveOnly) count += 1;
   if (state.externalObjectStatuses.length > 0) count += 1;
-  if (enableAgentCreatedVisibilityFilter && state.showAgentCreatedTasks) count += 1;
+  if (enableRoutineVisibilityFilter && state.hideRoutineExecutions) count += 1;
   return count;
 }

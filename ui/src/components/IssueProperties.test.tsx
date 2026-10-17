@@ -16,7 +16,6 @@ import type { Issue, IssueDocument } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getLastProjectId } from "../lib/recent-projects";
 import { IssueProperties } from "./IssueProperties";
-import { applyOptimisticIssueFieldUpdate } from "../lib/optimistic-issue-comments";
 import { queryKeys } from "../lib/queryKeys";
 
 const mockAgentsApi = vi.hoisted(() => ({
@@ -440,18 +439,6 @@ function createExecutionState(overrides: Partial<IssueExecutionState> = {}): Iss
   };
 }
 
-function createRelation(id: string, identifier: string, title: string, status: Issue["status"] = "todo") {
-  return {
-    id,
-    identifier,
-    title,
-    status,
-    priority: "medium" as const,
-    assigneeAgentId: null,
-    assigneeUserId: null,
-  };
-}
-
 function renderPropertiesWithQueryClient(container: HTMLDivElement, props: ComponentProps<typeof IssueProperties>, hiddenSettings: string[] = []) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -676,8 +663,24 @@ describe("IssueProperties", () => {
   });
 
   it("stacks property chips vertically and aligns each label with the first chip", async () => {
-    const blockedBy = Array.from({ length: 3 }, (_, index) => (createRelation(`blocker-${index + 1}`, `BLOCK-${index + 1}`, `Blocker ${index + 1}`))) as NonNullable<Issue["blockedBy"]>;
-    const blocks = Array.from({ length: 3 }, (_, index) => (createRelation(`blocked-${index + 1}`, `BLOCKED-${index + 1}`, `Blocked task ${index + 1}`))) as NonNullable<Issue["blocks"]>;
+    const blockedBy = Array.from({ length: 3 }, (_, index) => ({
+      id: `blocker-${index + 1}`,
+      identifier: `BLOCK-${index + 1}`,
+      title: `Blocker ${index + 1}`,
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+    })) as NonNullable<Issue["blockedBy"]>;
+    const blocks = Array.from({ length: 3 }, (_, index) => ({
+      id: `blocked-${index + 1}`,
+      identifier: `BLOCKED-${index + 1}`,
+      title: `Blocked task ${index + 1}`,
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+    })) as NonNullable<Issue["blocks"]>;
     const labels = Array.from({ length: 3 }, (_, index) => createLabel({
       id: `label-${index + 1}`,
       name: `Label ${index + 1}`,
@@ -1413,7 +1416,15 @@ describe("IssueProperties", () => {
     const root = renderProperties(container, {
       issue: createIssue({
         blockedBy: [
-          createRelation("issue-2", "PAP-2", "Existing blocker", "in_progress"),
+          {
+            id: "issue-2",
+            identifier: "PAP-2",
+            title: "Existing blocker",
+            status: "in_progress",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+          },
         ],
       }),
       childIssues: [],
@@ -1505,8 +1516,24 @@ describe("IssueProperties", () => {
     const root = renderProperties(container, {
       issue: createIssue({
         blockedBy: [
-          createRelation("issue-2", "PAP-2", "Existing blocker", "in_progress"),
-          createRelation("issue-4", "PAP-4", "Keep blocker"),
+          {
+            id: "issue-2",
+            identifier: "PAP-2",
+            title: "Existing blocker",
+            status: "in_progress",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+          },
+          {
+            id: "issue-4",
+            identifier: "PAP-4",
+            title: "Keep blocker",
+            status: "todo",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+          },
         ],
       }),
       childIssues: [],
@@ -1542,8 +1569,24 @@ describe("IssueProperties", () => {
     const root = renderProperties(container, {
       issue: createIssue({
         blockedBy: [
-          createRelation("issue-2", "PAP-2", "Existing blocker", "in_progress"),
-          createRelation("issue-4", "PAP-4", "Keep blocker"),
+          {
+            id: "issue-2",
+            identifier: "PAP-2",
+            title: "Existing blocker",
+            status: "in_progress",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+          },
+          {
+            id: "issue-4",
+            identifier: "PAP-4",
+            title: "Keep blocker",
+            status: "todo",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+          },
         ],
       }),
       childIssues: [],
@@ -1574,7 +1617,15 @@ describe("IssueProperties", () => {
   });
 
   it("summarizes long blocked-by and subtask relationships in their picker triggers", async () => {
-    const blockedBy = Array.from({ length: 7 }, (_, index) => (createRelation(`blocker-${index + 1}`, `BLOCK-${index + 1}`, `Blocker ${index + 1}`))) as NonNullable<Issue["blockedBy"]>;
+    const blockedBy = Array.from({ length: 7 }, (_, index) => ({
+      id: `blocker-${index + 1}`,
+      identifier: `BLOCK-${index + 1}`,
+      title: `Blocker ${index + 1}`,
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+    })) as NonNullable<Issue["blockedBy"]>;
     const childIssues = Array.from({ length: 7 }, (_, index) => createIssue({
       id: `child-${index + 1}`,
       identifier: `SUB-${index + 1}`,
@@ -1626,7 +1677,15 @@ describe("IssueProperties", () => {
       enableTaskWatchdogs: false,
       enableClassicTaskInterface: true,
     });
-    const blocking = Array.from({ length: 7 }, (_, index) => (createRelation(`blocking-${index + 1}`, `BLOCKING-${index + 1}`, `Blocking issue ${index + 1}`))) as NonNullable<Issue["blocks"]>;
+    const blocking = Array.from({ length: 7 }, (_, index) => ({
+      id: `blocking-${index + 1}`,
+      identifier: `BLOCKING-${index + 1}`,
+      title: `Blocking issue ${index + 1}`,
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+    })) as NonNullable<Issue["blocks"]>;
     const relatedIssues = Array.from({ length: 7 }, (_, index) => ({
       id: `related-${index + 1}`,
       identifier: `RELATED-${index + 1}`,
@@ -1744,7 +1803,15 @@ describe("IssueProperties", () => {
   });
 
   it("updates the blocked-by relationship summary when the issue changes", async () => {
-    const blockedBy = Array.from({ length: 7 }, (_, index) => (createRelation(`blocker-${index + 1}`, `BLOCK-${index + 1}`, `Blocker ${index + 1}`))) as NonNullable<Issue["blockedBy"]>;
+    const blockedBy = Array.from({ length: 7 }, (_, index) => ({
+      id: `blocker-${index + 1}`,
+      identifier: `BLOCK-${index + 1}`,
+      title: `Blocker ${index + 1}`,
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+    })) as NonNullable<Issue["blockedBy"]>;
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -1871,36 +1938,6 @@ describe("IssueProperties", () => {
     expect(getLastProjectId("company-2")).toBeUndefined();
     act(() => root.unmount());
     localStorage.clear();
-  });
-
-  it("changes only project organization while preserving the bound workspace", async () => {
-    mockProjectsApi.list.mockResolvedValue([createProject({ name: "Target Project" })]);
-    const workspace = createExecutionWorkspace({ projectId: null, projectWorkspaceId: null });
-    const issue = createIssue({
-      executionWorkspaceId: workspace.id,
-      currentExecutionWorkspace: workspace,
-    });
-    const onUpdate = vi.fn();
-    const root = renderProperties(container, { issue, childIssues: [], onUpdate, inline: true });
-    await flush();
-    await act(() => findRowTrigger(container, "Project")!.click());
-    const project = [...document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.trim() === "Target Project")!;
-    act(() => project.click());
-    expect(onUpdate).toHaveBeenLastCalledWith({ projectId: "project-1" });
-    const assigned = applyOptimisticIssueFieldUpdate(issue, onUpdate.mock.lastCall![0])!;
-    expect(assigned.executionWorkspaceId).toBe(workspace.id);
-    expect(assigned.currentExecutionWorkspace).toBe(workspace);
-    await act(() => findRowTrigger(container, "Project")!.click());
-    const none = [...document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.trim() === "No project")!;
-    act(() => none.click());
-    expect(onUpdate).toHaveBeenLastCalledWith({ projectId: null });
-    const cleared = applyOptimisticIssueFieldUpdate(assigned, onUpdate.mock.lastCall![0])!;
-    expect(cleared.executionWorkspaceId).toBe(workspace.id);
-    expect(cleared.currentExecutionWorkspace).toBe(workspace);
-    expect(cleared.currentExecutionWorkspace?.cwd).toBe(workspace.cwd);
-    act(() => root.unmount());
   });
 
   it("shows a green service link above the workspace row for a live non-main workspace", async () => {
@@ -2097,14 +2134,30 @@ describe("IssueProperties", () => {
         relatedWork: {
           outbound: [
             {
-              issue: createRelation("issue-22", "PAP-22", "Related task"),
+              issue: {
+                id: "issue-22",
+                identifier: "PAP-22",
+                title: "Related task",
+                status: "todo",
+                priority: "medium",
+                assigneeAgentId: null,
+                assigneeUserId: null,
+              },
               mentionCount: 1,
               sources: [{ kind: "description", sourceRecordId: null, label: "description", matchedText: "PAP-22" }],
             },
           ],
           inbound: [
             {
-              issue: createRelation("issue-23", "PAP-23", "Mentions this task", "in_progress"),
+              issue: {
+                id: "issue-23",
+                identifier: "PAP-23",
+                title: "Mentions this task",
+                status: "in_progress",
+                priority: "medium",
+                assigneeAgentId: null,
+                assigneeUserId: null,
+              },
               mentionCount: 1,
               sources: [{ kind: "description", sourceRecordId: null, label: "description", matchedText: "PAP-1" }],
             },
@@ -2140,25 +2193,65 @@ describe("IssueProperties", () => {
     const root = renderProperties(container, {
       issue: createIssue({
         blockedBy: [
-          createRelation("issue-22", "PAP-22", "Blocker"),
+          {
+            id: "issue-22",
+            identifier: "PAP-22",
+            title: "Blocker",
+            status: "todo",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+          },
         ],
         blocks: [
-          createRelation("issue-33", "PAP-33", "Blocked issue"),
+          {
+            id: "issue-33",
+            identifier: "PAP-33",
+            title: "Blocked issue",
+            status: "todo",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+          },
         ],
         relatedWork: {
           outbound: [
             {
-              issue: createRelation("issue-22", "PAP-22", "Blocker"),
+              issue: {
+                id: "issue-22",
+                identifier: "PAP-22",
+                title: "Blocker",
+                status: "todo",
+                priority: "medium",
+                assigneeAgentId: null,
+                assigneeUserId: null,
+              },
               mentionCount: 1,
               sources: [{ kind: "description", sourceRecordId: null, label: "description", matchedText: "PAP-22" }],
             },
             {
-              issue: createRelation("issue-33", "PAP-33", "Blocked issue"),
+              issue: {
+                id: "issue-33",
+                identifier: "PAP-33",
+                title: "Blocked issue",
+                status: "todo",
+                priority: "medium",
+                assigneeAgentId: null,
+                assigneeUserId: null,
+              },
               mentionCount: 1,
               sources: [{ kind: "description", sourceRecordId: null, label: "description", matchedText: "PAP-33" }],
             },
             {
-              issue: createRelation("child-44", "PAP-44", "Child issue"),
+              issue: {
+                id: "child-44",
+                identifier: "PAP-44",
+                title: "Child issue",
+                status: "todo",
+                priority: "medium",
+                assigneeAgentId: null,
+                assigneeUserId: null,
+              },
               mentionCount: 1,
               sources: [{ kind: "description", sourceRecordId: null, label: "description", matchedText: "PAP-44" }],
             },

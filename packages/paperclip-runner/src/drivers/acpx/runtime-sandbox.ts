@@ -1,6 +1,4 @@
-import { piProviderConfiguration } from "./pi-provider-config.js";
 import { configuredEnvironmentKeys } from "../../configured-environment.js";
-import { COPILOT_SYSTEM_INSTRUCTIONS_FILE } from "./copilot-profile.js";
 import { randomBytes } from "node:crypto";
 import {
   constants,
@@ -390,10 +388,6 @@ export async function prepareAcpxRuntimeSandbox(input: {
     workspaceRecordPath,
     `${input.binding.workspacePath}\n`,
   );
-  if (input.agent === "pi") {
-    const configuration = piProviderConfiguration(input.environment);
-    if (configuration) await writePrivateFile(join(agentHomeDirectory, "models.json"), configuration.json);
-  }
   if (input.agent === "claude") {
     // ACP otherwise rewrites exact IDs (including user-entered model IDs) to
     // picker aliases such as "sonnet". Its supported availableModels setting
@@ -639,21 +633,6 @@ async function ensurePrivateDirectory(
   // the entry and crashed before making that mkdir durable.
   await syncDirectory(physicalParent);
   return physical;
-}
-
-/** Call only while the host owns the provider lifetime lease, before launch. */
-export async function refreshCopilotSystemInstructions(
-  sandbox: Pick<AcpxRuntimeSandbox, "agentHomeDirectory">,
-  instructions: string,
-): Promise<void> {
-  if (instructions.includes("\0") || Buffer.byteLength(instructions) > 32 * 1024) {
-    throw new Error("Provider runtime instructions exceed their bounded size");
-  }
-  // Native Copilot reloads this file on session/load. Empty text clears old text.
-  await writePrivateFile(
-    join(sandbox.agentHomeDirectory, COPILOT_SYSTEM_INSTRUCTIONS_FILE),
-    `${instructions}\n`,
-  );
 }
 
 async function writePrivateFile(
