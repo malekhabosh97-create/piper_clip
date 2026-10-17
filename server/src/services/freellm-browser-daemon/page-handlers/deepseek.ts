@@ -15,6 +15,9 @@ export class DeepSeekHandler {
   async checkStatus(): Promise<"READY" | "NEEDS_LOGIN" | "NEEDS_HUMAN_INTERVENTION" | "QUOTA_EXCEEDED"> {
     if (this.page.isClosed()) return "NEEDS_LOGIN";
     const url = this.page.url();
+    if (!url.includes("deepseek.com")) {
+      return "NEEDS_LOGIN";
+    }
     if (url.includes("/login") || url.includes("/sign_in")) {
       return "NEEDS_LOGIN";
     }
@@ -36,9 +39,11 @@ export class DeepSeekHandler {
       if (visible) return "QUOTA_EXCEEDED";
     }
 
-    // Check for login button
-    const loginBtn = await this.page.$("button:has-text('Log in'), button:has-text('Sign in'), a[href*='login']");
-    const textarea = await this.page.$("textarea#chat-input, textarea");
+    // Check for login button in English and Arabic
+    const loginBtn = await this.page.$(
+      "button:has-text('Log in'), button:has-text('Sign in'), a[href*='login'], button:has-text('تسجيل الدخول'), a:has-text('تسجيل الدخول')",
+    );
+    const textarea = await this.page.$("textarea#chat-input, textarea, div[contenteditable='true'], #chat-input");
 
     if (!textarea && loginBtn) {
       return "NEEDS_LOGIN";

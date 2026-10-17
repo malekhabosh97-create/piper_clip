@@ -153,6 +153,41 @@ export class FreeLLMBrowserDaemon {
   }
 
   /**
+   * Return an existing open tab for the platform, or create a new tab and navigate to it.
+   */
+  async ensurePlatformPage(platform: SupportedPlatform): Promise<Page> {
+    await this.ensureBrowser();
+    if (!this.context) {
+      throw new Error("المتصفح غير متصل. يرجى التأكد من تشغيل المتصفح من ملف التشغيل.");
+    }
+
+    const cached = this.defaultPages.get(platform);
+    if (cached && !cached.isClosed()) {
+      return cached;
+    }
+
+    const allPages = this.context.pages();
+    const domainMatch =
+      platform === "deepseek"
+        ? "deepseek.com"
+        : platform === "gemini"
+          ? "gemini.google.com"
+          : "lmarena.ai";
+
+    const existing = allPages.find((p) => !p.isClosed() && p.url().includes(domainMatch));
+    if (existing) {
+      this.defaultPages.set(platform, existing);
+      return existing;
+    }
+
+    const newPage = await this.context.newPage();
+    const targetUrl = getBaseUrlForPlatform(platform);
+    await newPage.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+    this.defaultPages.set(platform, newPage);
+    return newPage;
+  }
+
+  /**
    * Verify whether a restored conversation tab genuinely retains prior conversation context.
    * Having an open tab alone does not prove context survival.
    */
@@ -297,11 +332,17 @@ export class FreeLLMBrowserDaemon {
   }
 
   async start(): Promise<number> {
-    const port = this.config.port ?? 3150;
+    const port =
+      this.config.port ?? (process.env.FREELLM_DAEMON_PORT ? Number(process.env.FREELLM_DAEMON_PORT) : 3151);
     const lockFile =
       this.config.lockFile ?? path.resolve(this.profileDir, "browser.lock");
 
     acquireAtomicLock(lockFile, port, this.authToken);
+
+    const tokenFile = path.resolve(this.profileDir, "token.txt");
+    try {
+      fs.writeFileSync(tokenFile, this.authToken, "utf8");
+    } catch {}
 
     process.on("exit", () => releaseAtomicLock(lockFile));
     process.on("SIGINT", () => {
@@ -361,9 +402,25 @@ export class FreeLLMBrowserDaemon {
         return;
       }
 
-      const dsPage = this.defaultPages.get("deepseek");
-      const geminiPage = this.defaultPages.get("gemini");
-      const arenaPage = this.defaultPages.get("arena");
+      const allPages = this.context.pages();
+
+      let dsPage = this.defaultPages.get("deepseek");
+      if (!dsPage || dsPage.isClosed()) {
+        dsPage = allPages.find((p) => !p.isClosed() && p.url().includes("deepseek.com"));
+        if (dsPage) this.defaultPages.set("deepseek", dsPage);
+      }
+
+      let geminiPage = this.defaultPages.get("gemini");
+      if (!geminiPage || geminiPage.isClosed()) {
+        geminiPage = allPages.find((p) => !p.isClosed() && p.url().includes("gemini.google.com"));
+        if (geminiPage) this.defaultPages.set("gemini", geminiPage);
+      }
+
+      let arenaPage = this.defaultPages.get("arena");
+      if (!arenaPage || arenaPage.isClosed()) {
+        arenaPage = allPages.find((p) => !p.isClosed() && p.url().includes("lmarena.ai"));
+        if (arenaPage) this.defaultPages.set("arena", arenaPage);
+      }
 
       const dsStatus = dsPage ? await new DeepSeekHandler(dsPage).checkStatus() : "DISCONNECTED";
       const geminiStatus = geminiPage ? await new GeminiHandler(geminiPage).checkStatus() : "DISCONNECTED";
@@ -399,7 +456,7 @@ export class FreeLLMBrowserDaemon {
 
     if (req.url === "/window/show" && req.method === "POST") {
       await this.ensureBrowser();
-      if (this.windowManager) await this.windowManager.showWindow();
+      if (this.windowManager) await this.windowManager.showWindow().catch(() => {});
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true }));
       return;
@@ -407,7 +464,7 @@ export class FreeLLMBrowserDaemon {
 
     if (req.url === "/window/minimize" && req.method === "POST") {
       await this.ensureBrowser();
-      if (this.windowManager) await this.windowManager.minimizeWindow();
+      if (this.windowManager) await this.windowManager.minimizeWindow().catch(() => {});
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true }));
       return;
@@ -425,17 +482,12 @@ export class FreeLLMBrowserDaemon {
           if (sessionId && this.sessions.has(sessionId)) {
             targetPage = this.sessions.get(sessionId)?.page;
           } else if (platform) {
-            if (platform === "arena" && !this.defaultPages.has("arena") && this.context) {
-              const p = await this.context.newPage();
-              await p.goto("https://lmarena.ai/?mode=direct", { waitUntil: "domcontentloaded" }).catch(() => {});
-              this.defaultPages.set("arena", p);
-            }
-            targetPage = this.defaultPages.get(platform as SupportedPlatform);
+            targetPage = await this.ensurePlatformPage(platform as SupportedPlatform);
           }
 
           if (targetPage && !targetPage.isClosed()) {
-            await targetPage.bringToFront();
-            if (this.windowManager) await this.windowManager.showWindow();
+            await targetPage.bringToFront().catch(() => {});
+            if (this.windowManager) await this.windowManager.showWindow().catch(() => {});
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ success: true, sessionId, platform }));
             return;

@@ -42,8 +42,13 @@ interface ChatMessage {
     title?: string;
     model?: string;
     systemPrompt?: string;
+    task?: {
+      title: string;
+      description?: string;
+    };
   } | null;
   createdAgentId?: string;
+  createdTask?: any;
 }
 
 export function DirectChatPage() {
@@ -163,17 +168,17 @@ export function DirectChatPage() {
       }
 
       if (parsed) {
-        if (parsed.agent) {
-          return {
-            action: "create_agent" as const,
-            name: parsed.agent.name || "Specialist Agent",
-            role: parsed.agent.role || "engineer",
-            title: parsed.agent.role || parsed.agent.name,
-            model: parsed.agent.model || "gemini-argon",
-            systemPrompt: parsed.agent.system_prompt || parsed.agent.description || "",
-          };
-        }
-        return parsed;
+        const agent = parsed.agent || parsed;
+        const task = parsed.task || agent.task;
+        return {
+          action: "create_agent" as const,
+          name: agent.name || "Specialist Agent",
+          role: agent.role || "engineer",
+          title: agent.title || agent.role || agent.name,
+          model: agent.model || "deepseek-normal",
+          systemPrompt: agent.systemPrompt || agent.system_prompt || agent.description || "",
+          task: task && task.title ? { title: String(task.title), description: task.description ? String(task.description) : undefined } : undefined,
+        };
       }
     } catch {}
     return null;
@@ -374,6 +379,10 @@ export function DirectChatPage() {
       title?: string;
       model?: string;
       systemPrompt?: string;
+      task?: {
+        title: string;
+        description?: string;
+      };
     },
   ) => {
     setIsCreatingAgent(true);
@@ -386,8 +395,9 @@ export function DirectChatPage() {
           name: proposal.name,
           role: proposal.role || "engineer",
           title: proposal.title || proposal.name,
-          model: proposal.model || "gemini-argon",
+          model: proposal.model || "deepseek-normal",
           systemPrompt: proposal.systemPrompt || "",
+          task: proposal.task || undefined,
         }),
       });
       if (!res.ok) {
@@ -397,7 +407,11 @@ export function DirectChatPage() {
       const created = await res.json();
       await fetchAgents();
       setMessages((prev) =>
-        prev.map((m) => (m.id === msgId ? { ...m, createdAgentId: created.id } : m)),
+        prev.map((m) =>
+          m.id === msgId
+            ? { ...m, createdAgentId: created.id, createdTask: created.task }
+            : m,
+        ),
       );
     } catch (e: any) {
       console.error("حدث خطأ أثناء إنشاء الإيجنت:", e.message);
@@ -646,27 +660,43 @@ export function DirectChatPage() {
                   )}
 
                   {msg.actionProposal && (
-                    <div className="mt-3 pt-3 border-t border-border/60 flex items-center justify-between gap-3">
-                      <div className="text-xs">
-                        <span className="font-semibold text-primary">مقترح إنشاء إيجنت: </span>
-                        <span>
-                          {msg.actionProposal.name} ({msg.actionProposal.role})
-                        </span>
+                    <div className="mt-3 pt-3 border-t border-border/60 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs">
+                          <span className="font-semibold text-primary">مقترح إنشاء إيجنت: </span>
+                          <span className="font-medium text-foreground">
+                            {msg.actionProposal.name} ({msg.actionProposal.role.toUpperCase()})
+                          </span>
+                          {msg.actionProposal.title && (
+                            <span className="text-muted-foreground ml-1"> - {msg.actionProposal.title}</span>
+                          )}
+                        </div>
+                        {msg.createdAgentId ? (
+                          <Badge variant="outline" className="text-emerald-400 border-emerald-500/40 gap-1 shrink-0">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> تم إنشاء الإيجنت {msg.createdTask ? "والمهمة" : ""}
+                          </Badge>
+                        ) : (
+                          <Button
+                            size="sm"
+                            disabled={isCreatingAgent}
+                            onClick={() => handleExecuteAgentCreation(msg.id, msg.actionProposal!)}
+                            className="text-xs font-semibold gap-1.5 shadow-sm shrink-0"
+                          >
+                            <PlusCircle className="w-4 h-4" />
+                            {isCreatingAgent ? "جاري الإنشاء والتكليف..." : "اعتماد وإنشاء الإيجنت وتكليفه"}
+                          </Button>
+                        )}
                       </div>
-                      {msg.createdAgentId ? (
-                        <Badge variant="outline" className="text-emerald-400 border-emerald-500/40 gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> تم الإنشاء
-                        </Badge>
-                      ) : (
-                        <Button
-                          size="sm"
-                          disabled={isCreatingAgent}
-                          onClick={() => handleExecuteAgentCreation(msg.id, msg.actionProposal!)}
-                          className="text-xs font-semibold gap-1.5 shadow-sm"
-                        >
-                          <PlusCircle className="w-4 h-4" />
-                          {isCreatingAgent ? "جاري إنشاء الإيجنت..." : "اعتماد وإنشاء الإيجنت الآن"}
-                        </Button>
+                      {msg.actionProposal.task && (
+                        <div className="text-[11px] bg-muted/40 p-2.5 rounded-md border border-border/50 text-muted-foreground flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                            <span>📋 المهمة المسندة إليه:</span>
+                            <span className="text-primary">{msg.actionProposal.task.title}</span>
+                          </div>
+                          {msg.actionProposal.task.description && (
+                            <p className="text-[10px] text-muted-foreground line-clamp-2">{msg.actionProposal.task.description}</p>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

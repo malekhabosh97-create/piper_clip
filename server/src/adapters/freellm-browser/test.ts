@@ -9,7 +9,15 @@ import type {
 
 function getDaemonToken(): string {
   if (process.env.FREELLM_DAEMON_TOKEN) return process.env.FREELLM_DAEMON_TOKEN;
+  const lockFile = "C:\\Users\\malek\\.piperclip-browser-profile\\browser.lock";
+  if (fs.existsSync(lockFile)) {
+    try {
+      const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+      if (lockData.token) return lockData.token;
+    } catch {}
+  }
   const tokenPaths = [
+    "C:\\Users\\malek\\.piperclip-browser-profile\\token.txt",
     path.resolve(process.cwd(), "server/.browser-profile/token.txt"),
     path.resolve(process.cwd(), ".browser-profile/token.txt"),
   ];
@@ -62,7 +70,7 @@ export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
 ): Promise<AdapterEnvironmentTestResult> {
   const checks: AdapterEnvironmentCheck[] = [];
-  const daemonPort = Number(process.env.FREELLM_DAEMON_PORT) || 3150;
+  const daemonPort = Number(process.env.FREELLM_DAEMON_PORT) || 3151;
   const daemonToken = getDaemonToken();
 
   const isHealthy = await checkDaemonHealth(daemonPort);

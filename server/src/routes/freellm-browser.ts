@@ -7,6 +7,43 @@ import { agents as agentsTable, companies, issues, issueComments } from "@paperc
 import { eq, desc, and } from "drizzle-orm";
 import { buildAgentInitializationPrompt } from "../services/freellm-tool-loop.js";
 import { FreeLLMOrchestratorStore } from "../services/freellm-orchestrator.js";
+import { FreeLLMBrowserDaemon } from "../services/freellm-browser-daemon/daemon.js";
+
+let sharedDaemon: FreeLLMBrowserDaemon | null = null;
+let daemonStartingPromise: Promise<void> | null = null;
+
+async function ensureDaemonRunning(): Promise<void> {
+  const daemonPort = Number(process.env.FREELLM_DAEMON_PORT) || 3151;
+  const isAlive = await new Promise<boolean>((resolve) => {
+    const probe = http.get(
+      { hostname: "127.0.0.1", port: daemonPort, path: "/health", timeout: 600 },
+      (res) => resolve(res.statusCode === 200),
+    );
+    probe.on("error", () => resolve(false));
+    probe.on("timeout", () => {
+      probe.destroy();
+      resolve(false);
+    });
+  });
+
+  if (isAlive) return;
+
+  if (!daemonStartingPromise) {
+    daemonStartingPromise = (async () => {
+      try {
+        const profileDir = "C:\\Users\\malek\\.piperclip-browser-profile";
+        sharedDaemon = new FreeLLMBrowserDaemon({ port: daemonPort, profileDir });
+        await sharedDaemon.start();
+        const tokenFile = path.resolve(profileDir, "token.txt");
+        fs.writeFileSync(tokenFile, sharedDaemon.token, "utf8");
+        console.log(`[FreeLLM] In-process browser daemon listening on port ${daemonPort}`);
+      } catch (e: any) {
+        console.warn(`[FreeLLM] Daemon startup notice: ${e.message}`);
+      }
+    })();
+  }
+  await daemonStartingPromise;
+}
 
 export function freellmBrowserRouter(db?: Db): Router {
   const router = Router();
@@ -14,7 +51,17 @@ export function freellmBrowserRouter(db?: Db): Router {
   const orchestrator = new FreeLLMOrchestratorStore(storageDir);
 
   function getDaemonToken(): string {
+    if (sharedDaemon?.token) return sharedDaemon.token;
     if (process.env.FREELLM_DAEMON_TOKEN) return process.env.FREELLM_DAEMON_TOKEN;
+
+    const lockPath = "C:\\Users\\malek\\.piperclip-browser-profile\\browser.lock";
+    if (fs.existsSync(lockPath)) {
+      try {
+        const lockInfo = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+        if (lockInfo.token) return lockInfo.token;
+      } catch {}
+    }
+
     const tokenPaths = [
       "C:\\Users\\malek\\.piperclip-browser-profile\\token.txt",
       path.resolve(process.cwd(), "server/.browser-profile/token.txt"),
@@ -26,8 +73,9 @@ export function freellmBrowserRouter(db?: Db): Router {
     return "";
   }
 
-  function forwardToDaemon(pathName: string, method: string, res: any, reqBody?: any) {
-    const daemonPort = Number(process.env.FREELLM_DAEMON_PORT) || 3150;
+  async function forwardToDaemon(pathName: string, method: string, res: any, reqBody?: any) {
+    await ensureDaemonRunning();
+    const daemonPort = Number(process.env.FREELLM_DAEMON_PORT) || 3151;
     const token = getDaemonToken();
     const payload = reqBody ? JSON.stringify(reqBody) : undefined;
 
@@ -245,7 +293,7 @@ export function freellmBrowserRouter(db?: Db): Router {
 
   router.post("/create-agent", async (req, res) => {
     try {
-      const { companyId, name, role = "general", title, model = "gemini-argon", systemPrompt } = req.body;
+      const { companyId, name, role = "general", title, model = "gemini-argon", systemPrompt, task } = req.body;
       if (!name) {
         res.status(400).json({ error: "Agent name is required" });
         return;
@@ -296,6 +344,28 @@ export function freellmBrowserRouter(db?: Db): Router {
                   console.error("Failed to write custom instructions:", e);
                 }
               }
+
+              if (task && task.title && createdAgent?.id && db) {
+                db.insert(issues)
+                  .values({
+                    companyId: targetCompanyId,
+                    title: String(task.title).trim(),
+                    description: task.description ? String(task.description).trim() : null,
+                    status: "todo",
+                    priority: "medium",
+                    assigneeAgentId: createdAgent.id,
+                  })
+                  .returning()
+                  .then(([createdIssue]) => {
+                    res.status(createRes.statusCode || 201).json({ ...createdAgent, task: createdIssue });
+                  })
+                  .catch((issueErr) => {
+                    console.error("Failed to auto-create task for agent:", issueErr);
+                    res.status(createRes.statusCode || 201).json(createdAgent);
+                  });
+                return;
+              }
+
               res.status(createRes.statusCode || 201).json(createdAgent);
             } catch (err: any) {
               res.status(500).json({ error: "Failed to parse agent creation response", raw: data });

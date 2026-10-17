@@ -13,7 +13,7 @@ console.log('Sending test prompt to /chat with platform=gemini...');
 const req = http.request(
   {
     hostname: '127.0.0.1',
-    port: 3150,
+    port: 3151,
     path: '/chat',
     method: 'POST',
     headers: {

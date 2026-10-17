@@ -3,7 +3,7 @@ import path from "node:path";
 import { FreeLLMBrowserDaemon } from "./daemon.js";
 
 async function main() {
-  const port = Number(process.env.FREELLM_DAEMON_PORT) || 3150;
+  const port = Number(process.env.FREELLM_DAEMON_PORT) || 3151;
   const profileDir =
     process.env.FREELLM_PROFILE_DIR || "C:\\Users\\malek\\.piperclip-browser-profile";
   fs.mkdirSync(profileDir, { recursive: true });

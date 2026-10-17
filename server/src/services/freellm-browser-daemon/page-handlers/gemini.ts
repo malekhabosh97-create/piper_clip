@@ -15,6 +15,9 @@ export class GeminiHandler {
   async checkStatus(): Promise<"READY" | "NEEDS_LOGIN" | "NEEDS_HUMAN_INTERVENTION" | "QUOTA_EXCEEDED"> {
     if (this.page.isClosed()) return "NEEDS_LOGIN";
     const url = this.page.url();
+    if (!url.includes("gemini.google.com")) {
+      return "NEEDS_LOGIN";
+    }
     if (url.includes("accounts.google.com") || url.includes("/signin") || url.includes("/sign_in")) {
       return "NEEDS_LOGIN";
     }
@@ -37,13 +40,15 @@ export class GeminiHandler {
     }
 
     // Check if input area is available
-    const input = await this.page.$('rich-textarea, div.ql-editor[role="textbox"], div[role="textbox"]');
+    const input = await this.page.$('rich-textarea, div.ql-editor[role="textbox"], div[role="textbox"], textarea');
     if (input) {
       return "READY";
     }
 
-    // Check if sign-in button is explicitly visible
-    const signinBtn = await this.page.$('button:has-text("Sign in"), a:has-text("Sign in")');
+    // Check if sign-in button is explicitly visible in English or Arabic
+    const signinBtn = await this.page.$(
+      'button:has-text("Sign in"), a:has-text("Sign in"), button:has-text("تسجيل الدخول"), a:has-text("تسجيل الدخول")',
+    );
     if (signinBtn) {
       return "NEEDS_LOGIN";
     }

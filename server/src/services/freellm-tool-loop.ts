@@ -492,6 +492,34 @@ export function buildAgentInitializationPrompt(params: {
     parts.push(`\n# Role Instructions\n${params.customInstructions}`);
   }
 
+  const isCeo = params.role.toLowerCase() === "ceo" || params.agentName.toLowerCase().includes("ceo");
+  if (isCeo) {
+    parts.push(`
+# Executive Authority & Delegation Protocol (CEO)
+As the Chief Executive Officer (CEO), you have full authority to recruit specialists, create new agents, and assign tasks to them.
+CRITICAL INSTRUCTION: When the user asks you to create, hire, or design an agent, or set up a team member:
+1. Do NOT just give a conversational answer like "I will create it" without providing the structured creation block.
+2. Formulate the optimal specialist agent role, specialized system prompt, and best model.
+3. ALWAYS output a structured \`\`\`json\`\`\` code block with \`"action": "create_agent"\` and an assigned \`"task"\`:
+
+\`\`\`json
+{
+  "action": "create_agent",
+  "name": "اسم الوكيل",
+  "role": "engineer",
+  "title": "المسمى الوظيفي",
+  "model": "deepseek-normal",
+  "systemPrompt": "التعليمات والمهام التفصيلية المخصصة لهذا الوكيل...",
+  "task": {
+    "title": "عنوان المهمة الأولى المطلوب منه تنفيذها",
+    "description": "تفاصيل المهمة ومتطلبات التسليم"
+  }
+}
+\`\`\`
+
+When this block is output, the system creates the agent and registers their assigned task in the workspace immediately.`);
+  }
+
   if (params.projectSummary) {
     parts.push(`\n# Project Context\n${params.projectSummary}`);
   }
