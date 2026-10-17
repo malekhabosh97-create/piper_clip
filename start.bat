@@ -8,12 +8,12 @@ echo        🚀 FreeLLM Work (Paperclip Studio)
 echo ==========================================================
 echo.
 
-:: 1. Check if Chrome debugging port 9222 is running
-netstat -ano | findstr ":9222" | findstr "LISTENING" >nul 2>&1
+:: 1. Check if Chrome debugging port 9223 is running
+netstat -ano | findstr ":9223" | findstr "LISTENING" >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo [1/3] Chrome is already running with remote debugging on port 9222.
+    echo [1/3] Chrome is already running with remote debugging on port 9223.
 ) else (
-    echo [1/3] Starting Chrome for FreeLLM Work on port 9222...
+    echo [1/3] Starting isolated Chrome for FreeLLM Work on port 9223...
     start "FreeLLM Browser" /min cmd /c "FreeLLM_Browser.bat"
 )
 

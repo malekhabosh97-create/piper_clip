@@ -70,7 +70,7 @@ export class FreeLLMBrowserDaemon {
   constructor(private config: DaemonConfig = {}) {
     this.authToken = crypto.randomBytes(24).toString("hex");
     this.profileDir =
-      this.config.profileDir ?? "C:\\Users\\malek\\.freellm-browser-profile";
+      this.config.profileDir ?? process.env.FREELLM_PROFILE_DIR ?? "C:\\Users\\malek\\.piperclip-browser-profile";
     fs.mkdirSync(this.profileDir, { recursive: true });
     this.registry = new PersistentSessionRegistry(this.profileDir);
   }
@@ -80,11 +80,12 @@ export class FreeLLMBrowserDaemon {
   }
 
   /**
-   * Ensure browser connection: connects to real Chrome/Edge on CDP port 9222.
+   * Ensure browser connection: connects to real Chrome/Edge on CDP port (default 9223).
    */
   private async ensureBrowser(): Promise<boolean> {
     try {
-      const browser = await chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 3000 });
+      const cdpPort = process.env.FREELLM_CDP_PORT ? Number(process.env.FREELLM_CDP_PORT) : 9223;
+      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 3000 });
       const contexts = browser.contexts();
       this.context = contexts[0] ?? (await browser.newContext());
 

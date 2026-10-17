@@ -4,7 +4,8 @@ import { FreeLLMBrowserDaemon } from "./daemon.js";
 
 async function main() {
   const port = Number(process.env.FREELLM_DAEMON_PORT) || 3150;
-  const profileDir = "C:\\Users\\malek\\.freellm-browser-profile";
+  const profileDir =
+    process.env.FREELLM_PROFILE_DIR || "C:\\Users\\malek\\.piperclip-browser-profile";
   fs.mkdirSync(profileDir, { recursive: true });
 
   console.log(`[FreeLLM] Initializing browser daemon with profile at: ${profileDir}`);
