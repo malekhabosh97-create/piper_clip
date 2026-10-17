@@ -273,6 +273,7 @@ export async function execute(
   const projectId = issue?.projectId ? String(issue.projectId) : undefined;
   const companyId = issue?.companyId ? String(issue.companyId) : undefined;
 
+  // Bind session deterministically to (agentId + issueId) so each agent task gets an isolated conversation
   const sessionId =
     agentId && issueId
       ? `agent-${agentId}-issue-${issueId}`
@@ -377,6 +378,7 @@ export async function execute(
 
     finalResponseText = turnResult.fullResponse;
 
+    // Extract structured tool calls ONLY after full response completion
     const toolCalls = extractStructuredToolCalls(finalResponseText);
     if (toolCalls.length === 0) {
       break;
@@ -427,6 +429,7 @@ export async function execute(
       break;
     }
 
+    // Feed tool execution outputs back into the SAME conversation without repeating bootstrap
     currentPrompt = `${toolFeedbackBlocks.join("\n\n")}\n\nContinue with the next step based on these tool results, or call submit_deliverable when finished.`;
   }
 

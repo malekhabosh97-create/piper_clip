@@ -19,6 +19,7 @@ export class DeepSeekHandler {
       return "NEEDS_LOGIN";
     }
 
+    // Check Cloudflare or Turnstile Captcha
     const cf = await this.page.$(
       "#challenge-running, #challenge-stage, .cf-turnstile, iframe[src*='challenges.cloudflare']",
     );
@@ -26,6 +27,7 @@ export class DeepSeekHandler {
       return "NEEDS_HUMAN_INTERVENTION";
     }
 
+    // Check rate limit / server busy banner
     const busyBanner = await this.page.$(
       ':has-text("The server is busy. Please try again later."), :has-text("rate limit")',
     );
@@ -34,6 +36,7 @@ export class DeepSeekHandler {
       if (visible) return "QUOTA_EXCEEDED";
     }
 
+    // Check for login button
     const loginBtn = await this.page.$("button:has-text('Log in'), button:has-text('Sign in'), a[href*='login']");
     const textarea = await this.page.$("textarea#chat-input, textarea");
 
@@ -42,6 +45,13 @@ export class DeepSeekHandler {
     }
 
     return "READY";
+  }
+
+  async getAvailableModels(): Promise<string[]> {
+    if (this.page.isClosed()) return [];
+    const status = await this.checkStatus();
+    if (status !== "READY") return [];
+    return ["deepseek-normal", "deepseek-deepthink"];
   }
 
   async setDeepThinkMode(enabled: boolean): Promise<boolean> {
@@ -159,6 +169,7 @@ export class DeepSeekHandler {
         return;
       }
 
+      // Check if Captcha popped up during generation
       const cf = await this.page.$("#challenge-running, .cf-turnstile");
       if (cf) {
         yield { type: "status", status: "NEEDS_HUMAN_INTERVENTION" };
@@ -167,6 +178,7 @@ export class DeepSeekHandler {
 
       const stopBtn = await this.page.$("button[aria-label*='Stop'], .ds-icon--stop, button:has-text('Stop')");
 
+      // Separate thinking nodes from final answer markdown nodes in post-boundary elements
       const turnSnapshot = await this.page.evaluate(
         ({ sel, baselineCount }) => {
           const allNodes = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
@@ -226,12 +238,14 @@ export class DeepSeekHandler {
         }
       }
 
+      // Completion check: new answer exists, stop button disappeared, text has stabilized
       if (tracker.isAnswerStarted && turnSnapshot.hasNewAnswer && !stopBtn && tracker.stabilityTicks >= 3) {
         yield { type: "status", status: "COMPLETED" };
         return;
       }
     }
 
+    // Timeout reached without completion: NEVER report COMPLETED on timeout
     yield {
       type: "error",
       message: "انتهت مهلة انتظار اكتمال الرد من DeepSeek دون استقرار الإجابة النهائية.",

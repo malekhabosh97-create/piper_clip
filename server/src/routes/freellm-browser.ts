@@ -3,8 +3,8 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable, companies } from "@paperclipai/db";
-import { eq } from "drizzle-orm";
+import { agents as agentsTable, companies, issues, issueComments } from "@paperclipai/db";
+import { eq, desc, and } from "drizzle-orm";
 import { buildAgentInitializationPrompt } from "../services/freellm-tool-loop.js";
 import { FreeLLMOrchestratorStore } from "../services/freellm-orchestrator.js";
 
@@ -54,14 +54,20 @@ export function freellmBrowserRouter(db?: Db): Router {
     );
 
     req.setTimeout(0);
-    res.on("close", () => req.destroy());
+
+    res.on("close", () => {
+      req.destroy();
+    });
+
     req.on("error", (err) => {
       if (!res.headersSent) {
         res.status(502).json({ error: "Browser Daemon unreachable", message: err.message });
       }
     });
 
-    if (payload) req.write(payload);
+    if (payload) {
+      req.write(payload);
+    }
     req.end();
   }
 
@@ -73,6 +79,7 @@ export function freellmBrowserRouter(db?: Db): Router {
   router.post("/cancel", (req, res) => forwardToDaemon("/cancel", "POST", res, req.body));
   router.post("/chat", (req, res) => forwardToDaemon("/chat", "POST", res, req.body));
 
+  // Central Server-Backed History for Agent Direct Chat (replaces browser localStorage)
   router.get("/agent-history/:agentId", async (req, res) => {
     try {
       const { agentId } = req.params;
@@ -152,17 +159,19 @@ export function freellmBrowserRouter(db?: Db): Router {
       const deepThink = model.includes("thinking") || model.includes("r1") || model === "deepseek-deepthink";
       const sessionId = issueId ? `agent-${agentId}-issue-${issueId}` : `agent-${agentId}`;
 
+      // Save user turn in central server history
       const historyFile = path.resolve(storageDir, `chat-history-${agentId}.json`);
       const existingHistory = fs.existsSync(historyFile)
         ? JSON.parse(fs.readFileSync(historyFile, "utf8"))
         : [];
-      existingHistory.push({
+      const userMsg = {
         id: `usr_${Date.now()}`,
         sender: "user",
         text: prompt,
         issueId: issueId || null,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      });
+      };
+      existingHistory.push(userMsg);
       fs.mkdirSync(storageDir, { recursive: true });
       fs.writeFileSync(historyFile, JSON.stringify(existingHistory, null, 2), "utf8");
 
@@ -183,6 +192,7 @@ export function freellmBrowserRouter(db?: Db): Router {
     }
   });
 
+  // Save completed agent response into central history
   router.post("/agent-history/:agentId/append", async (req, res) => {
     try {
       const { agentId } = req.params;
@@ -204,6 +214,7 @@ export function freellmBrowserRouter(db?: Db): Router {
     }
   });
 
+  // Orchestrator routes: Planning Council, Inter-Agent Messages, Project Index, R&D Backlog
   router.get("/orchestrator/overview", (_req, res) => {
     const index = orchestrator.buildOrRefreshProjectIndex("default-project", process.cwd());
     res.json({
@@ -281,10 +292,12 @@ export function freellmBrowserRouter(db?: Db): Router {
               if (systemPrompt && createdAgent?.adapterConfig?.instructionsFilePath) {
                 try {
                   fs.writeFileSync(createdAgent.adapterConfig.instructionsFilePath, systemPrompt, "utf8");
-                } catch {}
+                } catch (e) {
+                  console.error("Failed to write custom instructions:", e);
+                }
               }
               res.status(createRes.statusCode || 201).json(createdAgent);
-            } catch {
+            } catch (err: any) {
               res.status(500).json({ error: "Failed to parse agent creation response", raw: data });
             }
           });

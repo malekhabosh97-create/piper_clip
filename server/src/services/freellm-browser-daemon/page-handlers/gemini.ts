@@ -19,6 +19,7 @@ export class GeminiHandler {
       return "NEEDS_LOGIN";
     }
 
+    // Check challenge / bot verification
     const challenge = await this.page.$(
       "#challenge-running, #challenge-stage, .g-recaptcha, iframe[src*='recaptcha'], [id*='captcha']",
     );
@@ -26,6 +27,7 @@ export class GeminiHandler {
       return "NEEDS_HUMAN_INTERVENTION";
     }
 
+    // Check quota / rate limit banner
     const quotaBanner = await this.page.$(
       ':has-text("You\'ve reached your limit"), :has-text("quota exceeded"), :has-text("Try again later")',
     );
@@ -34,17 +36,39 @@ export class GeminiHandler {
       if (isVisible) return "QUOTA_EXCEEDED";
     }
 
+    // Check if input area is available
     const input = await this.page.$('rich-textarea, div.ql-editor[role="textbox"], div[role="textbox"]');
     if (input) {
       return "READY";
     }
 
+    // Check if sign-in button is explicitly visible
     const signinBtn = await this.page.$('button:has-text("Sign in"), a:has-text("Sign in")');
     if (signinBtn) {
       return "NEEDS_LOGIN";
     }
 
     return "READY";
+  }
+
+  async getAvailableModels(): Promise<string[]> {
+    if (this.page.isClosed()) return [];
+    try {
+      const pickerBtn = await this.page.$('button[aria-label*="mode picker"], button:has-text("Gemini")');
+      if (!pickerBtn) return ["gemini-default"];
+      await pickerBtn.click();
+      await this.page.waitForTimeout(300);
+      const items = await this.page.$$('[role="menuitem"], .mat-mdc-menu-item');
+      const models: string[] = [];
+      for (const item of items) {
+        const text = (await item.innerText().catch(() => "")).trim();
+        if (text) models.push(text);
+      }
+      await this.page.keyboard.press("Escape").catch(() => {});
+      return models.length > 0 ? models : ["gemini-default"];
+    } catch {
+      return ["gemini-default"];
+    }
   }
 
   async selectModel(modelKey?: string): Promise<boolean> {
@@ -127,6 +151,9 @@ export class GeminiHandler {
     return this.page.url();
   }
 
+  /**
+   * Snapshot current conversation boundary before sending a prompt.
+   */
   private async captureBoundary(responseSelector: string): Promise<{
     count: number;
     lastResponseText: string;
@@ -190,16 +217,19 @@ export class GeminiHandler {
         return;
       }
 
+      // Check if Captcha / Challenge popped up
       const challenge = await this.page.$("#challenge-running, .g-recaptcha, iframe[src*='recaptcha']");
       if (challenge) {
         yield { type: "status", status: "NEEDS_HUMAN_INTERVENTION" };
         return;
       }
 
+      // Check for stop button (indicates generation in progress)
       const stopBtn = await this.page.$(
         'button[aria-label*="Stop response"], button.stop-response-button, [aria-label*="Stop"]',
       );
 
+      // Extract new turn thinking & answer strictly from unmarked / post-boundary response elements
       const turnSnapshot = await this.page.evaluate(
         ({ sel, baselineCount }) => {
           const allNodes = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
@@ -209,12 +239,14 @@ export class GeminiHandler {
             return { hasNewElement: false, answerText: "", thinkingText: "" };
           }
 
+          // Extract thought drawer text if present
           const thoughtContainer = targetNode.closest("model-response, .conversation-container") || targetNode.parentElement;
           const thoughtNode = thoughtContainer?.querySelector(
             'model-thoughts, .model-thoughts, [data-test-id*="thought"], .thinking-content',
           ) as HTMLElement | null;
           const thinkingText = thoughtNode ? (thoughtNode.innerText || "").trim() : "";
 
+          // Clone or read answer text excluding thought block
           let answerText = (targetNode.innerText || "").trim();
           if (answerText.startsWith("Gemini said")) {
             answerText = answerText.replace(/^Gemini said\s*/i, "").trim();
@@ -235,6 +267,7 @@ export class GeminiHandler {
       }
 
       if (turnSnapshot.hasNewElement) {
+        // Guard against stale DOM re-matching the previous response text before new tokens arrive
         const isStaleDuplicate =
           boundary.count > 0 &&
           !tracker.isAnswerStarted &&
@@ -250,12 +283,15 @@ export class GeminiHandler {
         if (thinkEvt) yield thinkEvt;
       }
 
+      // Generation completion condition:
+      // New response element exists, answer has started, stop button is gone, and text remained stable for >= 3 checks
       if (tracker.isAnswerStarted && turnSnapshot.hasNewElement && !stopBtn && tracker.stabilityTicks >= 3) {
         yield { type: "status", status: "COMPLETED" };
         return;
       }
     }
 
+    // Timeout reached without completion: NEVER report COMPLETED on timeout
     yield {
       type: "error",
       message: "انتهت مهلة انتظار اكتمال الرد من Gemini دون استقرار الإجابة النهائية.",

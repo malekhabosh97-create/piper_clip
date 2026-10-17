@@ -87,12 +87,18 @@ function sha256(data: string | Buffer): string {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
 
+/**
+ * Extracts structured tool calls strictly from ```freellm-tool ... ``` blocks
+ * at the end/top-level of a completed model response.
+ * Ignores quoted examples (`> ```freellm-tool`) to prevent accidental execution.
+ */
 export function extractStructuredToolCalls(completedResponse: string): StructuredToolCall[] {
   const calls: StructuredToolCall[] = [];
   if (!completedResponse || !completedResponse.includes("```freellm-tool")) {
     return calls;
   }
 
+  // Strip blockquoted lines (`> ...`) so quoted documentation examples never trigger tools
   const unquotedLines = completedResponse
     .split(/\r?\n/)
     .filter((line) => !line.trimStart().startsWith(">"))
@@ -122,12 +128,17 @@ export function extractStructuredToolCalls(completedResponse: string): Structure
           args: parsed.args as Record<string, unknown>,
         });
       }
-    } catch {}
+    } catch {
+      // Malformed tool block is ignored safely
+    }
   }
 
   return calls;
 }
 
+/**
+ * Persistent Ledger of executed tool call IDs to prevent duplicate side effects after crash/restart.
+ */
 export class ToolCallLedger {
   private ledgerPath: string;
   private records = new Map<string, ToolExecutionOutcome>();
@@ -185,6 +196,7 @@ export async function executeStructuredToolCall(
   call: StructuredToolCall,
   options: LocalToolExecutorOptions,
 ): Promise<ToolExecutionOutcome> {
+  // 1. Idempotency / De-duplication check
   const prior = options.ledger.get(call.id);
   if (prior) {
     return {
@@ -194,6 +206,7 @@ export async function executeStructuredToolCall(
     };
   }
 
+  // 2. Permission check
   if (options.allowedTools && !options.allowedTools.includes(call.tool)) {
     const blocked: ToolExecutionOutcome = {
       callId: call.id,

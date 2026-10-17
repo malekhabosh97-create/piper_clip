@@ -3,12 +3,12 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 export interface ProposalEvaluationScores {
-  correctness: number;
-  projectFit: number;
-  stepClarity: number;
-  dependencies: number;
-  testability: number;
-  executionCost: number;
+  correctness: number; // 1-10
+  projectFit: number; // 1-10
+  stepClarity: number; // 1-10
+  dependencies: number; // 1-10
+  testability: number; // 1-10
+  executionCost: number; // 1-10 (higher = lower cost / more efficient)
 }
 
 export interface CouncilProposal {
@@ -86,6 +86,17 @@ export interface ProjectMemoryIndex {
   }>;
 }
 
+export interface AgentScopedMemory {
+  agentId: string;
+  entries: Array<{
+    id: string;
+    note: string;
+    verifiedEvidenceRef?: string;
+    fileVersionSha?: string;
+    recordedAt: string;
+  }>;
+}
+
 export interface RndBacklogItem {
   id: string;
   discoveredByAgentId: string;
@@ -132,6 +143,7 @@ export class FreeLLMOrchestratorStore {
     fs.renameSync(tmp, p);
   }
 
+  // --- 1. Planning Council Evaluation & Decision ---
   scoreProposal(scores: ProposalEvaluationScores): number {
     const weights = {
       correctness: 0.25,
@@ -179,6 +191,7 @@ export class FreeLLMOrchestratorStore {
     const top = evaluated[0];
     const runnerUp = evaluated[1];
 
+    // If disagreement is unresolved (score gap < 0.35 after reaching maxRounds), escalate to human operator
     const isCloseTie =
       top &&
       runnerUp &&
@@ -211,6 +224,7 @@ export class FreeLLMOrchestratorStore {
     return this.readJson<CouncilDecisionRecord[]>("council-decisions.json", []);
   }
 
+  // --- 2. Inter-Agent Saved Messages & Handoff Verification ---
   sendMessage(msg: Omit<InternalAgentMessage, "id" | "createdAt">): InternalAgentMessage {
     const messages = this.readJson<InternalAgentMessage[]>("agent-messages.json", []);
     const record: InternalAgentMessage = {
@@ -232,6 +246,10 @@ export class FreeLLMOrchestratorStore {
     return target;
   }
 
+  /**
+   * Receiving a message or an agent claiming completion is distinct from verified completion.
+   * Verifies that referenced output files actually exist on disk before marking deliverable verified.
+   */
   verifyDeliverableMessage(messageId: string, workspaceRoot: string): {
     verified: boolean;
     missingFiles: string[];
@@ -263,6 +281,7 @@ export class FreeLLMOrchestratorStore {
     );
   }
 
+  // --- 3. Project Index & Verified Shared/Agent Memory ---
   buildOrRefreshProjectIndex(projectId: string, workspaceRoot: string): ProjectMemoryIndex {
     const existing = this.readJson<Record<string, ProjectMemoryIndex>>("project-indices.json", {});
     const prev = existing[projectId];
@@ -292,6 +311,12 @@ export class FreeLLMOrchestratorStore {
           if (scripts.test) testCommands.push(`npm test (${scripts.test})`);
         } catch {}
       }
+
+      const pyPath = path.resolve(workspaceRoot, "run.py");
+      if (fs.existsSync(pyPath)) {
+        techStack.add("Python");
+        keyFilesHash["run.py"] = sha256File(pyPath);
+      }
     }
 
     const index: ProjectMemoryIndex = {
@@ -311,6 +336,7 @@ export class FreeLLMOrchestratorStore {
     return index;
   }
 
+  // --- 4. R&D Discovery Backlog & Optional Antigravity Local Bridge ---
   addRndProposal(item: Omit<RndBacklogItem, "id" | "createdAt">): RndBacklogItem {
     const list = this.readJson<RndBacklogItem[]>("rnd-backlog.json", []);
     const created: RndBacklogItem = {

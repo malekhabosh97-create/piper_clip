@@ -79,6 +79,9 @@ export class FreeLLMBrowserDaemon {
     return this.authToken;
   }
 
+  /**
+   * Ensure browser connection: connects to real Chrome/Edge on CDP port 9222.
+   */
   private async ensureBrowser(): Promise<boolean> {
     try {
       const browser = await chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 3000 });
@@ -87,6 +90,7 @@ export class FreeLLMBrowserDaemon {
 
       const allPages = this.context.pages();
 
+      // Ensure base DeepSeek page for health/status inspection
       let dsPage = allPages.find((p) => p.url().includes("deepseek.com"));
       if (!dsPage) {
         dsPage = await this.context.newPage();
@@ -97,6 +101,7 @@ export class FreeLLMBrowserDaemon {
         this.windowManager = new WindowManager(dsPage);
       }
 
+      // Ensure base Gemini page for health/status inspection
       let geminiPage = allPages.find((p) => p.url().includes("gemini.google.com"));
       if (!geminiPage) {
         geminiPage = await this.context.newPage();
@@ -104,6 +109,7 @@ export class FreeLLMBrowserDaemon {
       }
       this.defaultPages.set("gemini", geminiPage);
 
+      // Check existing Arena page if open
       const arenaPage = allPages.find((p) => p.url().includes("lmarena.ai"));
       if (arenaPage) {
         this.defaultPages.set("arena", arenaPage);
@@ -115,6 +121,10 @@ export class FreeLLMBrowserDaemon {
     }
   }
 
+  /**
+   * Verify whether a restored conversation tab genuinely retains prior conversation context.
+   * Having an open tab alone does not prove context survival.
+   */
   private async verifyContextIntact(
     page: Page,
     platform: SupportedPlatform,
@@ -124,12 +134,14 @@ export class FreeLLMBrowserDaemon {
     const currentUrl = page.url();
     const baseUrl = getBaseUrlForPlatform(platform);
 
+    // If expectedUrl had a specific conversation ID path, ensure the browser didn't redirect back to root/new chat
     const expectedConvId = extractConversationIdFromUrl(expectedUrl, platform);
     const currentConvId = extractConversationIdFromUrl(currentUrl, platform);
     if (expectedConvId && expectedConvId !== currentConvId) {
       return false;
     }
 
+    // Also verify DOM actually contains at least one prior message turn
     const hasMessages = await page
       .evaluate((plat) => {
         if (plat === "gemini") {
@@ -142,6 +154,7 @@ export class FreeLLMBrowserDaemon {
       }, platform)
       .catch(() => false);
 
+    // If URL is still at root base URL and no messages exist in DOM, context is lost
     if (!hasMessages && (currentUrl === baseUrl || !currentConvId)) {
       return false;
     }
@@ -149,6 +162,10 @@ export class FreeLLMBrowserDaemon {
     return hasMessages;
   }
 
+  /**
+   * Get or allocate a dedicated browser session for a specific agent/task.
+   * Never shares the default status tab with an active agent session.
+   */
   private async getOrCreateSession(
     sessionId: string,
     platform: SupportedPlatform,
@@ -158,6 +175,7 @@ export class FreeLLMBrowserDaemon {
     const persisted = this.registry.get(sessionId);
     const existing = this.sessions.get(sessionId);
 
+    // If session exists in memory and page is still open, verify platform hasn't switched
     if (existing && !existing.page.isClosed() && existing.platform === platform) {
       existing.model = model;
       existing.lastActiveAt = Date.now();
@@ -182,10 +200,12 @@ export class FreeLLMBrowserDaemon {
       throw new Error("المتصفح غير متصل. يرجى التأكد من تشغيل المتصفح من سطح المكتب.");
     }
 
+    // Close old page if platform switched
     if (existing && !existing.page.isClosed()) {
       await existing.page.close().catch(() => {});
     }
 
+    // Allocate a dedicated tab for this session
     const page = await this.context.newPage();
     const startUrl = getBaseUrlForPlatform(platform);
     const targetUrl =
@@ -459,6 +479,7 @@ export class FreeLLMBrowserDaemon {
                 ? "arena"
                 : "deepseek";
 
+          // Guarantee every request uses an isolated session key (never fall back to shared platform tab)
           const effectiveSessionId =
             rawSessionId ||
             (agentId && issueId ? `${agentId}:${issueId}` : agentId) ||
@@ -477,6 +498,7 @@ export class FreeLLMBrowserDaemon {
             Connection: "keep-alive",
           });
 
+          // Session Lock to prevent concurrent requests colliding on the same session tab
           const prevLock = this.sessionLocks.get(effectiveSessionId) || Promise.resolve();
           let releaseLock: () => void;
           const currentLock = new Promise<void>((r) => (releaseLock = r));
@@ -501,6 +523,7 @@ export class FreeLLMBrowserDaemon {
               status: "GENERATING",
             });
 
+            // One-time Bootstrap / System Prompt if session is not yet initialized (or if context was lost)
             const currentPromptHash = systemPrompt ? sha256Short(systemPrompt) : "";
             const needsBootstrap =
               Boolean(systemPrompt) &&
@@ -558,6 +581,7 @@ export class FreeLLMBrowserDaemon {
                 }
               }
 
+              // CRITICAL FIX: Only mark initialized if the model actually answered and completed
               if (initCompleted && initAnswer.trim().length > 0) {
                 const updatedUrl = session.page.url();
                 const updatedConvId = extractConversationIdFromUrl(updatedUrl, platform);
@@ -593,6 +617,7 @@ export class FreeLLMBrowserDaemon {
               }
             }
 
+            // Stream user task prompt
             let finalAnswer = "";
             let finalStatus = "IDLE";
 

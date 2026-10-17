@@ -42,6 +42,7 @@ export class PersistentSessionRegistry {
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
             if (item && typeof item.sessionId === "string") {
+              // Reset transient GENERATING status on startup recovery
               if (item.status === "GENERATING") {
                 item.status = "IDLE";
               }
@@ -138,11 +139,13 @@ export function extractConversationIdFromUrl(url: string, platform: SupportedPla
     const parsed = new URL(url);
     const segments = parsed.pathname.split("/").filter(Boolean);
     if (platform === "gemini") {
+      // e.g. https://gemini.google.com/app/c123456789abcdef
       const appIdx = segments.indexOf("app");
       if (appIdx >= 0 && segments[appIdx + 1]) {
         return segments[appIdx + 1];
       }
     } else if (platform === "deepseek") {
+      // e.g. https://chat.deepseek.com/a/chat/s/uuid
       const sIdx = segments.indexOf("s");
       if (sIdx >= 0 && segments[sIdx + 1]) {
         return segments[sIdx + 1];
@@ -153,7 +156,7 @@ export function extractConversationIdFromUrl(url: string, platform: SupportedPla
         return segments[cIdx + 1];
       }
     }
-    return parsed.searchParams?.get("id") || segments[segments.length - 1] || "";
+    return parsed.SearchParams?.get("id") || segments[segments.length - 1] || "";
   } catch {
     return "";
   }

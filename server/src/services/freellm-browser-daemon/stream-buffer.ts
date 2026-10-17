@@ -23,10 +23,15 @@ export interface StreamEventPayload {
 export class SSEChunkBuffer {
   private buffer = "";
 
+  /**
+   * Push a raw UTF-8 string chunk (decoded with TextDecoder({ stream: true }))
+   * and extract all complete `data: {...}` events in strict arrival order.
+   */
   push(chunk: string): StreamEventPayload[] {
     this.buffer += chunk;
     const events: StreamEventPayload[] = [];
     const lines = this.buffer.split(/\r?\n/);
+    // Keep the last potentially incomplete line in buffer
     this.buffer = lines.pop() ?? "";
 
     for (const line of lines) {
@@ -39,11 +44,16 @@ export class SSEChunkBuffer {
         if (parsed && typeof parsed.type === "string") {
           events.push(parsed);
         }
-      } catch {}
+      } catch {
+        // Ignore malformed non-JSON comment lines
+      }
     }
     return events;
   }
 
+  /**
+   * Flush any remaining complete event at stream end.
+   */
   flush(): StreamEventPayload[] {
     if (!this.buffer.trim()) {
       this.buffer = "";
@@ -55,6 +65,10 @@ export class SSEChunkBuffer {
   }
 }
 
+/**
+ * Tracks a model response as it mutates in DOM.
+ * Handles append, in-place replacement, and shortening without assuming monotonic growth.
+ */
 export class ResponseTurnTracker {
   private currentAnswer = "";
   private currentThinking = "";
@@ -88,12 +102,14 @@ export class ResponseTurnTracker {
     this.hasStartedAnswer = true;
     this.stableCount = 0;
 
+    // Case 1: Pure append (new text starts with previous text)
     if (rawAnswer.length > this.currentAnswer.length && rawAnswer.startsWith(this.currentAnswer)) {
       const delta = rawAnswer.slice(this.currentAnswer.length);
       this.currentAnswer = rawAnswer;
       return { type: "token", text: delta };
     }
 
+    // Case 2: Text was shortened, corrected in-place, or replaced mid-stream
     this.currentAnswer = rawAnswer;
     return { type: "replace", text: rawAnswer };
   }

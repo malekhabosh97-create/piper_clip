@@ -15,6 +15,7 @@ export class ArenaHandler {
   async checkStatus(): Promise<"READY" | "NEEDS_LOGIN" | "NEEDS_HUMAN_INTERVENTION" | "QUOTA_EXCEEDED"> {
     if (this.page.isClosed()) return "NEEDS_LOGIN";
 
+    // Check Cloudflare / Turnstile Challenge
     const cf = await this.page.$(
       "#challenge-running, #challenge-stage, .cf-turnstile, iframe[src*='challenges.cloudflare'], [id*='captcha']",
     );
@@ -30,12 +31,18 @@ export class ArenaHandler {
       if (visible) return "QUOTA_EXCEEDED";
     }
 
+    const textarea = await this.page.$("textarea, [contenteditable='true'][role='textbox']");
+    if (textarea) {
+      return "READY";
+    }
+
     return "READY";
   }
 
   async ensureDirectChatMode(modelKey?: string): Promise<boolean> {
     if (this.page.isClosed()) return false;
     try {
+      // Ensure Direct Chat tab/mode is active
       const directTab = await this.page.$(
         'button:has-text("Direct Chat"), a:has-text("Direct Chat"), [role="tab"]:has-text("Direct")',
       );
@@ -52,6 +59,7 @@ export class ArenaHandler {
         }
       }
 
+      // Accept terms dialog if visible
       const agreeBtn = await this.page.$('button:has-text("Agree"), button:has-text("Accept"), button:has-text("I Agree")');
       if (agreeBtn) {
         const visible = await agreeBtn.isVisible().catch(() => false);

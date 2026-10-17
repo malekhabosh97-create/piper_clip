@@ -17,10 +17,6 @@ import {
   CheckCircle2,
   Copy,
   Check,
-  AlertCircle,
-  RefreshCw,
-  Layers,
-  Zap,
 } from "lucide-react";
 
 interface Agent {
@@ -36,6 +32,8 @@ interface ChatMessage {
   id: string;
   sender: "user" | "agent";
   text: string;
+  thinkingText?: string;
+  conversationUrl?: string;
   timestamp: string;
   actionProposal?: {
     action: "create_agent";
@@ -56,11 +54,19 @@ export function DirectChatPage() {
   const [inputPrompt, setInputPrompt] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [browserStatus, setBrowserStatus] = useState<any>({ deepseek: "CHECKING", gemini: "CHECKING" });
+  const [browserStatus, setBrowserStatus] = useState<any>({
+    deepseek: "CHECKING",
+    gemini: "CHECKING",
+    arena: "CHECKING",
+  });
+  const [sessionMeta, setSessionMeta] = useState<{
+    conversationUrl?: string;
+    conversationId?: string;
+    isInitialized?: boolean;
+  }>({});
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // New agent form state
   const [newAgentForm, setNewAgentForm] = useState({
     name: "",
     role: "engineer",
@@ -73,7 +79,6 @@ export function DirectChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 1. Fetch Agents List
   const fetchAgents = async () => {
     if (!selectedCompanyId) return;
     try {
@@ -82,7 +87,6 @@ export function DirectChatPage() {
         const data = await res.json();
         setAgents(data);
         if (!selectedAgentId && data.length > 0) {
-          // Default to CEO agent if available, otherwise first agent
           const ceo = data.find((a: Agent) => a.role === "ceo" || a.name.includes("CEO"));
           setSelectedAgentId(ceo ? ceo.id : data[0].id);
         }
@@ -92,7 +96,6 @@ export function DirectChatPage() {
     }
   };
 
-  // 2. Fetch Browser Status
   const fetchBrowserStatus = async () => {
     try {
       const res = await fetch("/api/browser/status");
@@ -101,7 +104,7 @@ export function DirectChatPage() {
         setBrowserStatus(data);
       }
     } catch {
-      setBrowserStatus({ deepseek: "DISCONNECTED", gemini: "DISCONNECTED" });
+      setBrowserStatus({ deepseek: "DISCONNECTED", gemini: "DISCONNECTED", arena: "DISCONNECTED" });
     }
   };
 
@@ -112,47 +115,57 @@ export function DirectChatPage() {
     return () => clearInterval(timer);
   }, [selectedCompanyId]);
 
-  // 3. Load Chat History from LocalStorage when agent changes
+  // Load Chat History centrally from Paperclip Server (not browser localStorage)
   useEffect(() => {
     if (!selectedAgentId) return;
-    const stored = localStorage.getItem(`freellm_chat_${selectedAgentId}`);
-    if (stored) {
-      try {
-        setMessages(JSON.parse(stored));
-      } catch {
-        setMessages([]);
-      }
-    } else {
-      setMessages([]);
-    }
+    let active = true;
+    fetch(`/api/browser/agent-history/${selectedAgentId}`)
+      .then((r) => (r.ok ? r.json() : { messages: [] }))
+      .then((data) => {
+        if (active && Array.isArray(data.messages)) {
+          setMessages(data.messages);
+        }
+      })
+      .catch(() => {
+        if (active) setMessages([]);
+      });
+    return () => {
+      active = false;
+    };
   }, [selectedAgentId]);
 
-  // Save Chat History to LocalStorage
   useEffect(() => {
-    if (!selectedAgentId) return;
-    localStorage.setItem(`freellm_chat_${selectedAgentId}`, JSON.stringify(messages));
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, selectedAgentId]);
+  }, [messages]);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
   const activeModel = selectedAgent?.adapterConfig?.model || "gemini-argon";
-  const activePlatform = activeModel.startsWith("gemini") ? "gemini" : "deepseek";
+  const activePlatform = activeModel.startsWith("gemini")
+    ? "gemini"
+    : activeModel.startsWith("arena")
+      ? "arena"
+      : "deepseek";
   const isPlatformReady =
-    activePlatform === "gemini" ? browserStatus.gemini === "READY" : browserStatus.deepseek === "READY";
+    activePlatform === "gemini"
+      ? browserStatus.gemini === "READY"
+      : activePlatform === "arena"
+        ? browserStatus.arena === "READY"
+        : browserStatus.deepseek === "READY";
 
-  // Parse Action proposal from text
   const parseActionProposal = (text: string) => {
     try {
       const match = text.match(/```(?:json)?\s*(\{[\s\S]*?"action"\s*:\s*"create_agent"[\s\S]*?\})\s*```/);
       let parsed = match && match[1] ? JSON.parse(match[1]) : null;
+
       if (!parsed) {
         const rawMatch = text.match(/\{[\s\S]*?"action"\s*:\s*"create_agent"[\s\S]*?\}/);
         if (rawMatch) parsed = JSON.parse(rawMatch[0]);
       }
+
       if (parsed) {
         if (parsed.agent) {
           return {
-            action: "create_agent",
+            action: "create_agent" as const,
             name: parsed.agent.name || "Specialist Agent",
             role: parsed.agent.role || "engineer",
             title: parsed.agent.role || parsed.agent.name,
@@ -162,13 +175,10 @@ export function DirectChatPage() {
         }
         return parsed;
       }
-    } catch {
-      // ignore parse errors
-    }
+    } catch {}
     return null;
   };
 
-  // 4. Send Message (Verbatim Transmission)
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend !== undefined ? textToSend : inputPrompt).trim();
     if (!text || isStreaming || !selectedAgentId) return;
@@ -205,7 +215,7 @@ export function DirectChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agentId: selectedAgentId,
-          prompt: text, // Sent verbatim
+          prompt: text,
         }),
         signal: controller.signal,
       });
@@ -219,40 +229,94 @@ export function DirectChatPage() {
       if (!reader) throw new Error("لا يمكن قراءة البث (No stream reader)");
 
       const decoder = new TextDecoder();
+      let sseLineBuffer = "";
       let accumulatedText = "";
+      let accumulatedThinking = "";
+      let latestConvUrl = "";
+
+      const processSseLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) return;
+        const jsonStr = trimmed.slice(5).trim();
+        if (!jsonStr) return;
+        try {
+          const data = JSON.parse(jsonStr);
+          if (data.type === "token" && data.text) {
+            accumulatedText += data.text;
+          } else if (data.type === "replace" && typeof data.text === "string") {
+            // CRITICAL FIX: Handle in-place replacement or shortening of response text
+            accumulatedText = data.text;
+          } else if (data.type === "thinking" && data.thinkingText) {
+            accumulatedThinking = data.thinkingText;
+          } else if (data.type === "session_meta") {
+            if (data.conversationUrl) latestConvUrl = data.conversationUrl;
+            setSessionMeta((prev) => ({
+              conversationUrl: data.conversationUrl || prev.conversationUrl,
+              conversationId: data.conversationId || prev.conversationId,
+              isInitialized: data.isInitialized ?? prev.isInitialized,
+            }));
+          } else if (data.type === "content" && data.content) {
+            accumulatedText += data.content;
+          } else if (data.type === "error") {
+            accumulatedText += `\n\n> [!WARNING]\n> ${data.message || "حدث خطأ أثناء التوليد"}`;
+          }
+        } catch {}
+      };
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunkStr = decoder.decode(value, { stream: true });
-        const lines = chunkStr.split("\n");
+        // CRITICAL FIX: Buffer incomplete lines across fragmented network chunks
+        sseLineBuffer += decoder.decode(value, { stream: true });
+        const lines = sseLineBuffer.split(/\r?\n/);
+        sseLineBuffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === "token" && data.text) {
-                accumulatedText += data.text;
-              } else if (data.type === "content" && data.content) {
-                accumulatedText += data.content;
-              } else if (data.type === "error") {
-                accumulatedText += `\n\n> [!WARNING]\n> ${data.message || "حدث خطأ أثناء التوليد"}`;
-              }
-            } catch {
-              // ignore parse errors for partial chunks
-            }
-          }
+          processSseLine(line);
         }
 
-        // Update the agent message live
         const proposal = parseActionProposal(accumulatedText);
         setMessages((prev) =>
           prev.map((msg) =>
-            msg.id === agentMessageId ? { ...msg, text: accumulatedText, actionProposal: proposal } : msg
-          )
+            msg.id === agentMessageId
+              ? {
+                  ...msg,
+                  text: accumulatedText,
+                  thinkingText: accumulatedThinking || undefined,
+                  conversationUrl: latestConvUrl || undefined,
+                  actionProposal: proposal,
+                }
+              : msg,
+          ),
         );
       }
+
+      if (sseLineBuffer.trim()) {
+        processSseLine(sseLineBuffer);
+      }
+
+      const finalProposal = parseActionProposal(accumulatedText);
+      const completedAgentMsg: ChatMessage = {
+        id: agentMessageId,
+        sender: "agent",
+        text: accumulatedText,
+        thinkingText: accumulatedThinking || undefined,
+        conversationUrl: latestConvUrl || undefined,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        actionProposal: finalProposal,
+      };
+
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === agentMessageId ? completedAgentMsg : msg)),
+      );
+
+      // Persist agent response to central server history
+      await fetch(`/api/browser/agent-history/${selectedAgentId}/append`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: completedAgentMsg }),
+      }).catch(() => {});
     } catch (err: any) {
       if (err.name !== "AbortError") {
         setMessages((prev) =>
@@ -264,8 +328,8 @@ export function DirectChatPage() {
                     msg.text ||
                     `⚠️ تعذر استلام الرد: ${err.message}.\nيرجى التأكد من أن المتصفح يعمل وأن التبويب مسجل الدخول إليه.`,
                 }
-              : msg
-          )
+              : msg,
+          ),
         );
       }
     } finally {
@@ -274,23 +338,33 @@ export function DirectChatPage() {
     }
   };
 
-  const handleStopStreaming = () => {
+  // CRITICAL FIX: Stop generation both in UI stream AND inside real browser tab via /api/browser/cancel
+  const handleStopStreaming = async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       setIsStreaming(false);
     }
+    try {
+      await fetch("/api/browser/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: selectedAgentId ? `agent-${selectedAgentId}` : undefined,
+          platform: activePlatform,
+        }),
+      });
+    } catch {}
   };
 
-  const handleClearHistory = () => {
-    if (confirm("هل أنت متأكد من مسح سجل المحادثة مع هذا الإيجنت؟")) {
-      setMessages([]);
-      if (selectedAgentId) {
-        localStorage.removeItem(`freellm_chat_${selectedAgentId}`);
-      }
+  const handleClearHistory = async () => {
+    setMessages([]);
+    if (selectedAgentId) {
+      await fetch(`/api/browser/agent-history/${selectedAgentId}`, {
+        method: "DELETE",
+      }).catch(() => {});
     }
   };
 
-  // 5. Execute Agent Creation from CEO Action Proposal
   const handleExecuteAgentCreation = async (
     msgId: string,
     proposal: {
@@ -300,7 +374,7 @@ export function DirectChatPage() {
       title?: string;
       model?: string;
       systemPrompt?: string;
-    }
+    },
   ) => {
     setIsCreatingAgent(true);
     try {
@@ -316,33 +390,25 @@ export function DirectChatPage() {
           systemPrompt: proposal.systemPrompt || "",
         }),
       });
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "فشل إنشاء الإيجنت" }));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
-
       const created = await res.json();
       await fetchAgents();
-
-      // Mark this proposal as created
       setMessages((prev) =>
-        prev.map((m) => (m.id === msgId ? { ...m, createdAgentId: created.id } : m))
+        prev.map((m) => (m.id === msgId ? { ...m, createdAgentId: created.id } : m)),
       );
-
-      alert(`تم إنشاء الإيجنت "${created.name}" بنجاح في النظام! 🎉`);
     } catch (e: any) {
-      alert("حدث خطأ أثناء إنشاء الإيجنت: " + e.message);
+      console.error("حدث خطأ أثناء إنشاء الإيجنت:", e.message);
     } finally {
       setIsCreatingAgent(false);
     }
   };
 
-  // 6. Manual Agent Creation Modal Submit
   const handleManualCreateAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAgentForm.name.trim()) return;
-
     setIsCreatingAgent(true);
     try {
       const res = await fetch("/api/browser/create-agent", {
@@ -357,20 +423,23 @@ export function DirectChatPage() {
           systemPrompt: newAgentForm.systemPrompt,
         }),
       });
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "فشل إنشاء الإيجنت" }));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
-
       const created = await res.json();
       await fetchAgents();
       setSelectedAgentId(created.id);
       setShowCreateModal(false);
-      setNewAgentForm({ name: "", role: "engineer", title: "", model: "gemini-argon", systemPrompt: "" });
-      alert(`تم إنشاء الإيجنت "${created.name}" بنجاح! تم نقلك للمحادثة معه.`);
+      setNewAgentForm({
+        name: "",
+        role: "engineer",
+        title: "",
+        model: "gemini-argon",
+        systemPrompt: "",
+      });
     } catch (e: any) {
-      alert("فشل إنشاء الإيجنت: " + e.message);
+      console.error("فشل إنشاء الإيجنت:", e.message);
     } finally {
       setIsCreatingAgent(false);
     }
@@ -387,21 +456,27 @@ export function DirectChatPage() {
       await fetch("/api/browser/tab/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: activePlatform }),
+        body: JSON.stringify({
+          sessionId: selectedAgentId ? `agent-${selectedAgentId}` : undefined,
+          platform: activePlatform,
+        }),
       });
     } catch (e: any) {
-      alert("تعذر فتح التبويب: " + e.message);
+      console.error("تعذر فتح التبويب:", e.message);
     }
   };
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] max-w-6xl mx-auto p-4 gap-4">
-      {/* Top Header & Agent Picker */}
       <header className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border border-border bg-card shadow-xs">
         <div className="flex items-center gap-3">
           <div className="relative">
             <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-lg shadow-inner">
-              {selectedAgent?.role === "ceo" ? <Crown className="w-6 h-6 text-amber-400" /> : <Bot className="w-6 h-6" />}
+              {selectedAgent?.role === "ceo" ? (
+                <Crown className="w-6 h-6 text-amber-400" />
+              ) : (
+                <Bot className="w-6 h-6" />
+              )}
             </div>
             <span
               className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-card ${
@@ -429,7 +504,7 @@ export function DirectChatPage() {
               </select>
             </div>
 
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
               <span className="text-xs text-muted-foreground">{selectedAgent?.title || "AI Agent"}</span>
               <Badge variant="outline" className="text-[11px] py-0 px-1.5 border-primary/30 text-primary">
                 {activeModel}
@@ -444,6 +519,11 @@ export function DirectChatPage() {
               >
                 {isPlatformReady ? "متصل بالمتصفح الحي" : "غير متصل / يحتاج فحص"}
               </Badge>
+              {sessionMeta.conversationId && (
+                <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                  الجلسة: {sessionMeta.conversationId.slice(0, 10)}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
@@ -454,10 +534,10 @@ export function DirectChatPage() {
             size="sm"
             onClick={handleBringBrowserToFront}
             className="text-xs gap-1.5 border-border hover:bg-muted"
-            title="إظهار صفحة الموديل الحية في المتصفح"
+            title="إظهار تبويب محادثة هذا الوكيل المستقلة في المتصفح"
           >
             <ExternalLink className="w-3.5 h-3.5 text-primary" />
-            <span>عرض التبويب في المتصفح</span>
+            <span>تبويب الوكيل المستقل</span>
           </Button>
 
           <Button
@@ -470,166 +550,119 @@ export function DirectChatPage() {
             <span>+ إضافة إيجنت</span>
           </Button>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleClearHistory}
-            className="text-xs text-muted-foreground hover:text-destructive"
-            title="مسح سجل المحادثة الحالي"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+          {messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearHistory}
+              className="text-xs text-muted-foreground hover:text-destructive"
+              title="مسح المحادثة"
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </header>
 
-      {/* Main Chat Thread */}
-      <main className="flex-1 overflow-y-auto rounded-xl border border-border bg-card/50 p-4 space-y-4">
+      <main className="flex-1 overflow-y-auto rounded-xl border border-border bg-card/50 p-4 space-y-5">
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-4 max-w-lg mx-auto">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-sm">
-              {selectedAgent?.role === "ceo" ? <Crown className="w-8 h-8 text-amber-400" /> : <Bot className="w-8 h-8" />}
+          <div className="flex flex-col items-center justify-center h-full text-center max-w-lg mx-auto space-y-4 py-12">
+            <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+              <Sparkles className="w-8 h-8" />
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-foreground">
-                محادثة مباشرة مع {selectedAgent?.name || "الإيجنت"}
-              </h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                {selectedAgent?.role === "ceo"
-                  ? "أنا المدير التنفيذي (CEO) لشركة FreeLLM Work بموديل Gemini 4 Argon. مهمتي قيادة الشركة، صناعة الإيجنتات، وتنسيق الخدمات والمهام."
-                  : "أنا جاهز لمساعدتك وتنفيذ طلباتك مباشرة عبر المتصفح وبشكل حرفي متدفق."}
+            <div className="space-y-1.5">
+              <h2 className="text-lg font-bold text-foreground">
+                محادثة مباشرة ومستقلة مع {selectedAgent?.name || "الإيجنت"}
+              </h2>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                كل وكيل يعمل في تبويب محادثة مستقل خاص به، مع تهيئة دوره لمرة واحدة وحفظ الجلسة والسجل مركزياً في الخادم.
               </p>
             </div>
-
-            {selectedAgent?.role === "ceo" && (
-              <div className="w-full flex flex-col gap-2 pt-2">
-                <span className="text-xs text-muted-foreground font-medium text-right">أوامر سريعة مقترحة:</span>
-                <button
-                  onClick={() => handleSendMessage("اصنع لي إيجنت مطور برمجيات كامل (Fullstack Engineer) بموديل ديب سيك")}
-                  className="text-xs text-right p-2.5 rounded-lg border border-border/80 bg-background/50 hover:bg-primary/10 hover:border-primary/40 transition-colors text-foreground flex items-center justify-between"
-                >
-                  <span>🚀 اصنع لي إيجنت مطور برمجيات كامل (Fullstack) بموديل ديب سيك</span>
-                  <Zap className="w-3.5 h-3.5 text-primary" />
-                </button>
-                <button
-                  onClick={() => handleSendMessage("اصنع لي إيجنت كاتب محتوى وتسويق (Content Marketer) بموديل جيمناي فلاش")}
-                  className="text-xs text-right p-2.5 rounded-lg border border-border/80 bg-background/50 hover:bg-primary/10 hover:border-primary/40 transition-colors text-foreground flex items-center justify-between"
-                >
-                  <span>✍️ اصنع لي إيجنت كاتب محتوى وتسويق بموديل جيمناي فلاش</span>
-                  <Zap className="w-3.5 h-3.5 text-primary" />
-                </button>
-                <button
-                  onClick={() => handleSendMessage("ما هي خطتك التنفيذية لإدارة وتوزيع المهام بين الإيجنتات اليوم؟")}
-                  className="text-xs text-right p-2.5 rounded-lg border border-border/80 bg-background/50 hover:bg-primary/10 hover:border-primary/40 transition-colors text-foreground flex items-center justify-between"
-                >
-                  <span>📋 ما هي خطتك التنفيذية لإدارة وتوزيع المهام بين الإيجنتات؟</span>
-                  <Zap className="w-3.5 h-3.5 text-primary" />
-                </button>
-              </div>
-            )}
           </div>
         ) : (
           messages.map((msg) => (
             <div
               key={msg.id}
-              className={`flex gap-3 max-w-4xl ${msg.sender === "user" ? "ml-auto flex-row-reverse" : "mr-auto"}`}
+              className={`flex gap-3 ${msg.sender === "user" ? "flex-row-reverse" : "flex-row"}`}
             >
               <div
-                className={`w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-xs font-bold ${
+                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-1 ${
                   msg.sender === "user"
-                    ? "bg-primary text-primary-foreground shadow-xs"
+                    ? "bg-primary text-primary-foreground"
                     : "bg-muted border border-border text-foreground"
                 }`}
               >
-                {msg.sender === "user" ? (
-                  <User className="w-4 h-4" />
-                ) : selectedAgent?.role === "ceo" ? (
-                  <Crown className="w-4 h-4 text-amber-400" />
-                ) : (
-                  <Bot className="w-4 h-4 text-primary" />
-                )}
+                {msg.sender === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
               </div>
 
               <div
-                className={`flex flex-col gap-1.5 ${
-                  msg.sender === "user" ? "items-end max-w-[85%]" : "items-start max-w-[90%]"
+                className={`flex flex-col max-w-[82%] ${
+                  msg.sender === "user" ? "items-end" : "items-start"
                 }`}
               >
-                <div className="flex items-center gap-2 px-1">
-                  <span className="text-xs font-semibold text-foreground/80">
-                    {msg.sender === "user" ? "أنت" : selectedAgent?.name || "الوكيل"}
+                <div className="flex items-center gap-2 mb-1 px-1">
+                  <span className="text-[11px] font-semibold text-muted-foreground">
+                    {msg.sender === "user" ? "أنت" : selectedAgent?.name || "الإيجنت"}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">{msg.timestamp}</span>
+                  <span className="text-[10px] text-muted-foreground/70">{msg.timestamp}</span>
+                  {msg.sender === "agent" && msg.text && (
+                    <button
+                      onClick={() => copyToClipboard(msg.text, msg.id)}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                      title="نسخ الرد"
+                    >
+                      {copiedId === msg.id ? (
+                        <Check className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3 h-3" />
+                      )}
+                    </button>
+                  )}
                 </div>
 
                 <div
-                  className={`rounded-2xl p-4 text-sm leading-relaxed shadow-xs relative group ${
+                  className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                     msg.sender === "user"
                       ? "bg-primary text-primary-foreground rounded-tr-xs"
-                      : "bg-card border border-border text-card-foreground rounded-tl-xs"
+                      : "bg-muted/70 border border-border text-foreground rounded-tl-xs"
                   }`}
                 >
-                  {msg.sender === "agent" && (
-                    <button
-                      onClick={() => copyToClipboard(msg.text, msg.id)}
-                      className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 p-1.5 rounded-md bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-all"
-                      title="نسخ النص"
-                    >
-                      {copiedId === msg.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
+                  {msg.thinkingText && (
+                    <details className="mb-2 text-xs text-muted-foreground bg-background/60 p-2 rounded border border-border">
+                      <summary className="cursor-pointer font-medium">عملية التفكير (Thinking)</summary>
+                      <pre className="mt-1.5 whitespace-pre-wrap font-mono text-[11px]">
+                        {msg.thinkingText}
+                      </pre>
+                    </details>
+                  )}
+                  {msg.sender === "user" ? (
+                    <div className="whitespace-pre-wrap">{msg.text}</div>
+                  ) : (
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.text || (isStreaming ? "جاري التفكير والكتابة من المتصفح..." : "")}
+                      </ReactMarkdown>
+                    </div>
                   )}
 
-                  <div className="markdown-body prose dark:prose-invert max-w-none text-sm break-words">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text || "..."}</ReactMarkdown>
-                  </div>
-
-                  {/* Executive Action Card (if CEO proposes creating an agent) */}
-                  {msg.actionProposal && msg.actionProposal.action === "create_agent" && (
-                    <div className="mt-4 p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/5 flex flex-col gap-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs">
-                          <Zap className="w-4 h-4" />
-                          <span>اقتراح تنفيذي لإنشاء إيجنت جديد</span>
-                        </div>
-                        <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-400">
-                          {msg.actionProposal.model || "gemini-argon"}
-                        </Badge>
+                  {msg.actionProposal && (
+                    <div className="mt-3 pt-3 border-t border-border/60 flex items-center justify-between gap-3">
+                      <div className="text-xs">
+                        <span className="font-semibold text-primary">مقترح إنشاء إيجنت: </span>
+                        <span>
+                          {msg.actionProposal.name} ({msg.actionProposal.role})
+                        </span>
                       </div>
-
-                      <div className="text-xs space-y-1 text-foreground/90 bg-background/60 p-2.5 rounded-lg border border-border">
-                        <div>
-                          <strong>الاسم:</strong> {msg.actionProposal.name}
-                        </div>
-                        <div>
-                          <strong>الدور:</strong> {msg.actionProposal.role} ({msg.actionProposal.title || "محدد"})
-                        </div>
-                        {msg.actionProposal.systemPrompt && (
-                          <div className="text-[11px] text-muted-foreground line-clamp-2">
-                            <strong>التعليمات:</strong> {msg.actionProposal.systemPrompt}
-                          </div>
-                        )}
-                      </div>
-
                       {msg.createdAgentId ? (
-                        <div className="flex items-center justify-between text-xs text-emerald-400 bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/30">
-                          <span className="flex items-center gap-1.5 font-medium">
-                            <CheckCircle2 className="w-4 h-4" />
-                            تم إنشاء هذا الإيجنت بنجاح في النظام!
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs border-emerald-500/40 text-emerald-400"
-                            onClick={() => setSelectedAgentId(msg.createdAgentId!)}
-                          >
-                            التبديل إليه الآن
-                          </Button>
-                        </div>
+                        <Badge variant="outline" className="text-emerald-400 border-emerald-500/40 gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> تم الإنشاء
+                        </Badge>
                       ) : (
                         <Button
                           size="sm"
                           disabled={isCreatingAgent}
                           onClick={() => handleExecuteAgentCreation(msg.id, msg.actionProposal!)}
-                          className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold gap-1.5 shadow-sm"
+                          className="text-xs font-semibold gap-1.5 shadow-sm"
                         >
                           <PlusCircle className="w-4 h-4" />
                           {isCreatingAgent ? "جاري إنشاء الإيجنت..." : "اعتماد وإنشاء الإيجنت الآن"}
@@ -645,7 +678,6 @@ export function DirectChatPage() {
         <div ref={messagesEndRef} />
       </main>
 
-      {/* Input Bar */}
       <footer className="relative flex flex-col gap-2 p-2 rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-end gap-2">
           <textarea
@@ -695,13 +727,12 @@ export function DirectChatPage() {
         <div className="flex items-center justify-between px-2 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-primary" />
-            يتم نقل النص حرفياً للمتصفح الحي واستلام الرد المتدفق عبر محرك FreeLLM
+            يتم حفظ المحادثة مركزياً في الخادم مع تهيئة الوكيل لمرة واحدة وعزل التبويب
           </span>
           <span>{inputPrompt.length} حرف</span>
         </div>
       </footer>
 
-      {/* Create Agent Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-card border border-border rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
@@ -740,9 +771,10 @@ export function DirectChatPage() {
                     className="w-full mt-1 bg-background border border-border rounded-lg px-2.5 py-2 text-sm text-foreground focus:ring-1 focus:ring-primary focus:outline-hidden"
                   >
                     <option value="engineer">مهندس (Engineer)</option>
-                    <option value="cto">CTO</option>
-                    <option value="cmo">CMO</option>
-                    <option value="cfo">CFO</option>
+                    <option value="cto">CTO (مخطط ومعماري)</option>
+                    <option value="qa">QA (مختبر ومراجع)</option>
+                    <option value="pm">PM (مدير تنفيذ ودمج)</option>
+                    <option value="researcher">Researcher (بحث وتطوير)</option>
                     <option value="general">عام (General)</option>
                   </select>
                 </div>
@@ -758,7 +790,8 @@ export function DirectChatPage() {
                     <option value="gemini-pro">Gemini 3.1 Pro</option>
                     <option value="gemini-flash">Gemini 3.8 Flash</option>
                     <option value="deepseek-normal">DeepSeek V3 (Normal)</option>
-                    <option value="deepseek-thinking">DeepSeek R1 (Thinking)</option>
+                    <option value="deepseek-deepthink">DeepSeek R1 (DeepThink)</option>
+                    <option value="arena-direct">LMArena (Direct Chat)</option>
                   </select>
                 </div>
               </div>
