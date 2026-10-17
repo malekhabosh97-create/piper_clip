@@ -156,7 +156,7 @@ export function extractConversationIdFromUrl(url: string, platform: SupportedPla
         return segments[cIdx + 1];
       }
     }
-    return parsed.SearchParams?.get("id") || segments[segments.length - 1] || "";
+    return parsed.searchParams?.get("id") || segments[segments.length - 1] || "";
   } catch {
     return "";
   }

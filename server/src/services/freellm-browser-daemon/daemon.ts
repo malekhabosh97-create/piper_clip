@@ -117,14 +117,15 @@ export class FreeLLMBrowserDaemon {
       if (!browser) return false;
 
       const contexts = browser.contexts();
-      this.context = contexts[0] ?? (await browser.newContext());
+      const context = contexts[0] ?? (await browser.newContext());
+      this.context = context;
 
-      const allPages = this.context.pages();
+      const allPages = context.pages();
 
       // Ensure base DeepSeek page for health/status inspection
       let dsPage = allPages.find((p) => p.url().includes("deepseek.com"));
       if (!dsPage) {
-        dsPage = await this.context.newPage();
+        dsPage = await context.newPage();
         await dsPage.goto("https://chat.deepseek.com", { waitUntil: "domcontentloaded" }).catch(() => {});
       }
       this.defaultPages.set("deepseek", dsPage);
@@ -135,7 +136,7 @@ export class FreeLLMBrowserDaemon {
       // Ensure base Gemini page for health/status inspection
       let geminiPage = allPages.find((p) => p.url().includes("gemini.google.com"));
       if (!geminiPage) {
-        geminiPage = await this.context.newPage();
+        geminiPage = await context.newPage();
         await geminiPage.goto("https://gemini.google.com/app", { waitUntil: "domcontentloaded" }).catch(() => {});
       }
       this.defaultPages.set("gemini", geminiPage);
@@ -402,7 +403,7 @@ export class FreeLLMBrowserDaemon {
         return;
       }
 
-      const allPages = this.context.pages();
+      const allPages = this.context?.pages() ?? [];
 
       let dsPage = this.defaultPages.get("deepseek");
       if (!dsPage || dsPage.isClosed()) {
@@ -581,6 +582,22 @@ export class FreeLLMBrowserDaemon {
             Connection: "keep-alive",
           });
 
+          const safeWrite = (str: string) => {
+            if (!res.writableEnded && !res.destroyed) {
+              try {
+                res.write(str);
+              } catch {}
+            }
+          };
+
+          const safeEnd = () => {
+            if (!res.writableEnded && !res.destroyed) {
+              try {
+                res.end();
+              } catch {}
+            }
+          };
+
           // Session Lock to prevent concurrent requests colliding on the same session tab
           const prevLock = this.sessionLocks.get(effectiveSessionId) || Promise.resolve();
           let releaseLock: () => void;
@@ -646,7 +663,7 @@ export class FreeLLMBrowserDaemon {
                     chunk.status === "QUOTA_EXCEEDED" ||
                     chunk.status === "CANCELLED"
                   ) {
-                    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+                    safeWrite(`data: ${JSON.stringify(chunk)}\n\n`);
                     this.registry.upsert(effectiveSessionId, {
                       platform,
                       model,
@@ -680,7 +697,7 @@ export class FreeLLMBrowserDaemon {
                   currentPromptHash,
                 );
 
-                res.write(
+                safeWrite(
                   `data: ${JSON.stringify({
                     type: "session_meta",
                     status: "INITIALIZED",
@@ -690,7 +707,7 @@ export class FreeLLMBrowserDaemon {
                   })}\n\n`,
                 );
               } else {
-                res.write(
+                safeWrite(
                   `data: ${JSON.stringify({
                     type: "error",
                     message: `فشلت تهيئة محادثة الوكيل (Status: ${initStatus || "INCOMPLETE"})`,
@@ -723,7 +740,7 @@ export class FreeLLMBrowserDaemon {
                   await this.windowManager.showWindow().catch(() => {});
                 }
               }
-              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              safeWrite(`data: ${JSON.stringify(chunk)}\n\n`);
             }
 
             const finalUrl = session.page.url();
@@ -748,7 +765,7 @@ export class FreeLLMBrowserDaemon {
                   : (finalStatus as any) || "IDLE",
             });
 
-            res.write(
+            safeWrite(
               `data: ${JSON.stringify({
                 type: "session_meta",
                 conversationUrl: finalUrl,
@@ -759,16 +776,16 @@ export class FreeLLMBrowserDaemon {
           } finally {
             this.activeGenerators.delete(effectiveSessionId);
             releaseLock!();
-            res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-            res.end();
+            safeWrite(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+            safeEnd();
           }
         } catch (err: any) {
           if (!res.headersSent) {
             res.writeHead(500, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: err.message }));
           } else {
-            res.write(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`);
-            res.end();
+            safeWrite(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`);
+            safeEnd();
           }
         }
       });
