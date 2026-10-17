@@ -1043,7 +1043,8 @@ export const providerDescriptorSchema = {
         "claude_managed",
         "aws_agentcore",
         "acpx",
-        "openai_dot"
+        "openai_dot",
+        "grok_bot"
       ]
     },
     "driver": {
@@ -1053,7 +1054,8 @@ export const providerDescriptorSchema = {
         "claude_managed_agents_api",
         "aws_agentcore_harness_api",
         "acpx_runtime",
-        "openai_dot_mcp"
+        "openai_dot_mcp",
+        "grok_bot_mcp"
       ]
     },
     "model": {
@@ -1078,7 +1080,8 @@ export const providerDescriptorSchema = {
       "enum": [
         "anthropic_managed_agents",
         "aws_bedrock_agentcore_harness",
-        "openai_dot"
+        "openai_dot",
+        "grok_bot"
       ]
     },
     "providerSessionId": {
@@ -1170,9 +1173,37 @@ export const providerDescriptorSchema = {
     },
     "turnControls": {
       "$ref": "#/$defs/turnControls"
+    },
+    "piThinkingLevel": {
+      "enum": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
     }
   },
   "allOf": [
+    {
+      "if": {
+        "required": [
+          "piThinkingLevel"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provider": {
+            "const": "acpx"
+          },
+          "agent": {
+            "const": "pi"
+          }
+        },
+        "required": [
+          "agent"
+        ]
+      }
+    },
     {
       "oneOf": [
         {
@@ -1247,6 +1278,19 @@ export const providerDescriptorSchema = {
             },
             "driver": {
               "const": "openai_dot_mcp"
+            },
+            "executionKind": {
+              "const": "remote_service"
+            }
+          }
+        },
+        {
+          "properties": {
+            "provider": {
+              "const": "grok_bot"
+            },
+            "driver": {
+              "const": "grok_bot_mcp"
             },
             "executionKind": {
               "const": "remote_service"
@@ -1378,6 +1422,38 @@ export const providerDescriptorSchema = {
         "properties": {
           "service": {
             "const": "openai_dot"
+          },
+          "model": {
+            "const": null
+          },
+          "providerSessionId": {
+            "const": null
+          },
+          "agentProcessId": {
+            "const": null
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "provider": {
+            "const": "grok_bot"
+          }
+        },
+        "required": [
+          "provider"
+        ]
+      },
+      "then": {
+        "required": [
+          "service",
+          "providerSessionId"
+        ],
+        "properties": {
+          "service": {
+            "const": "grok_bot"
           },
           "model": {
             "const": null
@@ -3362,6 +3438,11 @@ export const questionSetSchema = {
             "text"
           ]
         },
+        "initialText": {
+          "type": "string",
+          "maxLength": 100000,
+          "description": "Editable draft of at most 100000 Unicode code points. Never an implicit answer; submitted text still uses the existing response bounds."
+        },
         "options": {
           "type": "array",
           "maxItems": 128,
@@ -3420,6 +3501,11 @@ export const questionSetSchema = {
             "required": [
               "options"
             ],
+            "not": {
+              "required": [
+                "initialText"
+              ]
+            },
             "properties": {
               "options": {
                 "type": "array",
