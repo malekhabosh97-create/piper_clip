@@ -4,8 +4,8 @@ console.log("Starting Chrome directly to observe stdout/stderr...");
 const child = spawn(
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   [
-    "--remote-debugging-port=9222",
-    '--user-data-dir=C:\\Users\\malek\\.freellm-browser-profile',
+    "--remote-debugging-port=9223",
+    '--user-data-dir=C:\\Users\\malek\\.piperclip-browser-profile',
     "--no-first-run",
     "--no-default-browser-check",
     "https://chat.deepseek.com"

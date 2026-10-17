@@ -2,7 +2,7 @@ const { chromium } = require('playwright');
 
 (async () => {
   try {
-    const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+    const browser = await chromium.connectOverCDP('http://127.0.0.1:9223');
     const page = browser.contexts()[0].pages().find(p => p.url().includes('gemini.google.com'));
     const texts = await page.$$eval('.response-content, message-content, model-response, .model-response-text', els => els.map(e => ({
       tag: e.tagName,

@@ -2,7 +2,7 @@ const { chromium } = require('playwright');
 
 (async () => {
   try {
-    const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+    const browser = await chromium.connectOverCDP('http://127.0.0.1:9223');
     const contexts = browser.contexts();
     const pages = contexts[0].pages();
     console.log('Total pages:', pages.length);

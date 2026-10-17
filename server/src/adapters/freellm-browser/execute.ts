@@ -17,7 +17,6 @@ function getDaemonToken(): string {
   if (process.env.FREELLM_DAEMON_TOKEN) return process.env.FREELLM_DAEMON_TOKEN;
   const tokenPaths = [
     "C:\\Users\\malek\\.piperclip-browser-profile\\token.txt",
-    "C:\\Users\\malek\\.freellm-browser-profile\\token.txt",
     path.resolve(process.cwd(), "server/.browser-profile/token.txt"),
     path.resolve(process.cwd(), ".browser-profile/token.txt"),
   ];

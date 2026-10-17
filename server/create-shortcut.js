@@ -3,8 +3,8 @@ import { execSync } from "node:child_process";
 const desktopLnk = "C:\\Users\\malek\\Desktop\\FreeLLM Browser.lnk";
 const arabicLnk = "C:\\Users\\malek\\Desktop\\متصفح FreeLLM.lnk";
 const chromeExe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const profileDir = "C:\\Users\\malek\\.freellm-browser-profile";
-const args = `--remote-debugging-port=9222 --user-data-dir=\\"${profileDir}\\" --no-first-run --no-default-browser-check https://chat.deepseek.com`;
+const profileDir = "C:\\Users\\malek\\.piperclip-browser-profile";
+const args = `--remote-debugging-port=9223 --user-data-dir=\\"${profileDir}\\" --no-first-run --no-default-browser-check https://chat.deepseek.com`;
 
 const ps = `
 $w = New-Object -ComObject WScript.Shell

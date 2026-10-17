@@ -1,7 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 
-const token = fs.readFileSync('C:\\Users\\malek\\.freellm-browser-profile\\token.txt', 'utf8').trim();
+const token = fs.readFileSync('C:\\Users\\malek\\.piperclip-browser-profile\\token.txt', 'utf8').trim();
 
 const reqData = JSON.stringify({
   prompt: 'Answer with only the word: SUCCESS',

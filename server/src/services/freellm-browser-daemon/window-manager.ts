@@ -26,9 +26,12 @@ export class WindowManager {
       // CDP may fail if not supported on target
     }
 
-    // Also bring window to front in Windows shell
+    // Also bring window to front in Windows shell targeting this specific browser PID
     try {
-      exec(`powershell -Command "$w = New-Object -ComObject WScript.Shell; $w.AppActivate('DeepSeek'); $w.AppActivate('Chrome'); $w.AppActivate('Edge')"` );
+      const cdpPort = process.env.FREELLM_CDP_PORT ? Number(process.env.FREELLM_CDP_PORT) : 9223;
+      exec(
+        `powershell -NoProfile -Command "$conn = Get-NetTCPConnection -LocalPort ${cdpPort} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($conn) { $w = New-Object -ComObject WScript.Shell; $w.AppActivate($conn.OwningProcess) }"`
+      );
     } catch {}
   }
 

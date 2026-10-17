@@ -85,7 +85,37 @@ export class FreeLLMBrowserDaemon {
   private async ensureBrowser(): Promise<boolean> {
     try {
       const cdpPort = process.env.FREELLM_CDP_PORT ? Number(process.env.FREELLM_CDP_PORT) : 9223;
-      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 3000 });
+      let browser: any = null;
+      try {
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 1500 });
+      } catch {
+        const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+        const edgePath = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+        const exe = fs.existsSync(chromePath) ? chromePath : (fs.existsSync(edgePath) ? edgePath : null);
+        if (exe) {
+          const { spawn } = await import("node:child_process");
+          spawn(
+            exe,
+            [
+              `--remote-debugging-port=${cdpPort}`,
+              `--user-data-dir=${this.profileDir}`,
+              "--no-first-run",
+              "--no-default-browser-check",
+              "https://chat.deepseek.com",
+            ],
+            { detached: true, stdio: "ignore" }
+          ).unref();
+          for (let i = 0; i < 8; i++) {
+            await new Promise((r) => setTimeout(r, 500));
+            try {
+              browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 1000 });
+              if (browser) break;
+            } catch {}
+          }
+        }
+      }
+      if (!browser) return false;
+
       const contexts = browser.contexts();
       this.context = contexts[0] ?? (await browser.newContext());
 
