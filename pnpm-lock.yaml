@@ -535,8 +535,8 @@ importers:
         specifier: 1.0.88
         version: 1.0.88
       '@github/copilot-linux-x64':
-        specifier: 1.0.88
-        version: 1.0.88
+        specifier: 1.0.97
+        version: 1.0.97
     devDependencies:
       '@paperclipai/paperclip-eval-kernel':
         specifier: workspace:*
@@ -1078,8 +1078,8 @@ importers:
         specifier: 1.0.88
         version: 1.0.88
       '@github/copilot-linux-x64':
-        specifier: 1.0.88
-        version: 1.0.88
+        specifier: 1.0.97
+        version: 1.0.97
     devDependencies:
       '@paperclipai/paperclip-runner':
         specifier: workspace:*
@@ -2614,8 +2614,8 @@ packages:
     os: [darwin]
     hasBin: true
 
-  '@github/copilot-linux-x64@1.0.88':
-    resolution: {integrity: sha512-wNigl8rqixvtYoRtygNf1NQIXx77MWC6XyqoV7fcfvSwWI3GJCltnczaNLbC611K9Hex39KyiUR5ZmGhQ+LzLw==}
+  '@github/copilot-linux-x64@1.0.97':
+    resolution: {integrity: sha512-JiBotcOf2DcGvsRqETRu0oozqZ9M6rH8njCkFt4w7kBZvrHG+MHhIo1mbGKJso2GZjBnZVtvJYsKXMZV3Nx/ig==}
     cpu: [x64]
     os: [linux]
     hasBin: true
@@ -10538,7 +10538,7 @@ snapshots:
   '@github/copilot-darwin-x64@1.0.88':
     optional: true
 
-  '@github/copilot-linux-x64@1.0.88':
+  '@github/copilot-linux-x64@1.0.97':
     optional: true
 
   '@grpc/grpc-js@1.14.5':
