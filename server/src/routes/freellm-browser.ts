@@ -5,9 +5,13 @@ import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import { agents as agentsTable, companies } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
+import { buildAgentInitializationPrompt } from "../services/freellm-tool-loop.js";
+import { FreeLLMOrchestratorStore } from "../services/freellm-orchestrator.js";
 
 export function freellmBrowserRouter(db?: Db): Router {
   const router = Router();
+  const storageDir = path.resolve(process.cwd(), ".freellm-runtime");
+  const orchestrator = new FreeLLMOrchestratorStore(storageDir);
 
   function getDaemonToken(): string {
     if (process.env.FREELLM_DAEMON_TOKEN) return process.env.FREELLM_DAEMON_TOKEN;
@@ -26,6 +30,7 @@ export function freellmBrowserRouter(db?: Db): Router {
     const daemonPort = Number(process.env.FREELLM_DAEMON_PORT) || 3150;
     const token = getDaemonToken();
     const payload = reqBody ? JSON.stringify(reqBody) : undefined;
+
     const headers: Record<string, string> = {
       "x-freellm-auth": token,
       "Content-Type": "application/json",
@@ -47,18 +52,16 @@ export function freellmBrowserRouter(db?: Db): Router {
         daemonRes.pipe(res);
       },
     );
+
     req.setTimeout(0);
-    res.on("close", () => {
-      req.destroy();
-    });
+    res.on("close", () => req.destroy());
     req.on("error", (err) => {
       if (!res.headersSent) {
         res.status(502).json({ error: "Browser Daemon unreachable", message: err.message });
       }
     });
-    if (payload) {
-      req.write(payload);
-    }
+
+    if (payload) req.write(payload);
     req.end();
   }
 
@@ -70,42 +73,162 @@ export function freellmBrowserRouter(db?: Db): Router {
   router.post("/cancel", (req, res) => forwardToDaemon("/cancel", "POST", res, req.body));
   router.post("/chat", (req, res) => forwardToDaemon("/chat", "POST", res, req.body));
 
+  router.get("/agent-history/:agentId", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const historyFile = path.resolve(storageDir, `chat-history-${agentId}.json`);
+      if (fs.existsSync(historyFile)) {
+        const items = JSON.parse(fs.readFileSync(historyFile, "utf8"));
+        res.json({ agentId, messages: Array.isArray(items) ? items : [] });
+        return;
+      }
+      res.json({ agentId, messages: [] });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.delete("/agent-history/:agentId", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const historyFile = path.resolve(storageDir, `chat-history-${agentId}.json`);
+      if (fs.existsSync(historyFile)) {
+        fs.rmSync(historyFile, { force: true });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   router.post("/agent-chat", async (req, res) => {
     try {
-      const { agentId, prompt } = req.body;
+      const { agentId, prompt, issueId, projectId } = req.body;
       if (!agentId || !prompt) {
         res.status(400).json({ error: "Missing agentId or prompt" });
         return;
       }
 
       let model = "gemini-argon";
-      let systemPrompt = "";
+      let agentName = "Specialist Agent";
+      let role = "engineer";
+      let title: string | undefined;
+      let reportsTo: string | null = null;
+      let customInstructions = "";
+      let companyId: string | undefined;
+
       if (db) {
         const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, agentId));
         if (agent) {
+          agentName = agent.name;
+          role = agent.role;
+          title = agent.title ?? undefined;
+          reportsTo = agent.reportsTo ?? null;
+          companyId = agent.companyId;
           const cfg = (agent.adapterConfig as any) || {};
           if (cfg.model) model = cfg.model;
           if (cfg.instructionsFilePath && fs.existsSync(cfg.instructionsFilePath)) {
             try {
-              systemPrompt = fs.readFileSync(cfg.instructionsFilePath, "utf8").trim();
+              customInstructions = fs.readFileSync(cfg.instructionsFilePath, "utf8").trim();
             } catch {}
           }
         }
       }
 
-      const platform = model.startsWith("gemini") ? "gemini" : "deepseek";
-      const deepThink = model.includes("thinking") || model.includes("r1");
+      const systemPrompt = buildAgentInitializationPrompt({
+        agentId,
+        agentName,
+        role,
+        title,
+        reportsTo,
+        customInstructions,
+      });
+
+      const platform = model.startsWith("gemini")
+        ? "gemini"
+        : model.startsWith("arena")
+          ? "arena"
+          : "deepseek";
+      const deepThink = model.includes("thinking") || model.includes("r1") || model === "deepseek-deepthink";
+      const sessionId = issueId ? `agent-${agentId}-issue-${issueId}` : `agent-${agentId}`;
+
+      const historyFile = path.resolve(storageDir, `chat-history-${agentId}.json`);
+      const existingHistory = fs.existsSync(historyFile)
+        ? JSON.parse(fs.readFileSync(historyFile, "utf8"))
+        : [];
+      existingHistory.push({
+        id: `usr_${Date.now()}`,
+        sender: "user",
+        text: prompt,
+        issueId: issueId || null,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      });
+      fs.mkdirSync(storageDir, { recursive: true });
+      fs.writeFileSync(historyFile, JSON.stringify(existingHistory, null, 2), "utf8");
 
       forwardToDaemon("/chat", "POST", res, {
         prompt,
         platform,
         model,
         deepThink,
-        sessionId: agentId,
-        systemPrompt: systemPrompt || undefined,
+        sessionId,
+        agentId,
+        issueId,
+        projectId,
+        companyId,
+        systemPrompt,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/agent-history/:agentId/append", async (req, res) => {
+    try {
+      const { agentId } = req.params;
+      const { message } = req.body;
+      if (!message) {
+        res.status(400).json({ error: "Missing message" });
+        return;
+      }
+      const historyFile = path.resolve(storageDir, `chat-history-${agentId}.json`);
+      const existingHistory = fs.existsSync(historyFile)
+        ? JSON.parse(fs.readFileSync(historyFile, "utf8"))
+        : [];
+      existingHistory.push(message);
+      fs.mkdirSync(storageDir, { recursive: true });
+      fs.writeFileSync(historyFile, JSON.stringify(existingHistory, null, 2), "utf8");
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/orchestrator/overview", (_req, res) => {
+    const index = orchestrator.buildOrRefreshProjectIndex("default-project", process.cwd());
+    res.json({
+      projectIndex: index,
+      councilDecisions: orchestrator.listCouncilDecisions(),
+      messages: orchestrator.listMessages(),
+      rndBacklog: orchestrator.listRndProposals(),
+    });
+  });
+
+  router.post("/orchestrator/council", (req, res) => {
+    try {
+      const record = orchestrator.evaluateCouncilRound(req.body);
+      res.json(record);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post("/orchestrator/messages", (req, res) => {
+    try {
+      const msg = orchestrator.sendMessage(req.body);
+      res.json(msg);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 
@@ -158,17 +281,16 @@ export function freellmBrowserRouter(db?: Db): Router {
               if (systemPrompt && createdAgent?.adapterConfig?.instructionsFilePath) {
                 try {
                   fs.writeFileSync(createdAgent.adapterConfig.instructionsFilePath, systemPrompt, "utf8");
-                } catch (e) {
-                  console.error("Failed to write custom instructions:", e);
-                }
+                } catch {}
               }
               res.status(createRes.statusCode || 201).json(createdAgent);
-            } catch (err: any) {
+            } catch {
               res.status(500).json({ error: "Failed to parse agent creation response", raw: data });
             }
           });
         },
       );
+
       createReq.on("error", (e) => res.status(502).json({ error: e.message }));
       createReq.write(agentPayload);
       createReq.end();
