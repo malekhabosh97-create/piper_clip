@@ -43,7 +43,7 @@ patchedDependencies:
     hash: 6st5fzvttegjv64llnfegwwpca
     path: patches/acpx@0.12.0.patch
   acpx@0.13.1:
-    hash: btis2ixbxfyq422xwpnza3ncle
+    hash: j4huaoi2baejrlq7vdcgzlx54m
     path: patches/acpx@0.13.1.patch
   embedded-postgres@18.1.0-beta.16:
     hash: 55uhvnotpqyiy37rn3pqpukhei
@@ -347,15 +347,15 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       ws:
-        specifier: ^8.21.3
-        version: 8.21.3
+        specifier: ^8.22.0
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
       '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
+        specifier: ^8.18.2
+        version: 8.18.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -508,7 +508,7 @@ importers:
         version: 0.160.0
       acpx:
         specifier: 0.13.1
-        version: 0.13.1(patch_hash=btis2ixbxfyq422xwpnza3ncle)
+        version: 0.13.1(patch_hash=j4huaoi2baejrlq7vdcgzlx54m)
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -529,8 +529,8 @@ importers:
         version: 1.8.0
     optionalDependencies:
       '@github/copilot-darwin-arm64':
-        specifier: 1.0.88
-        version: 1.0.88
+        specifier: 1.0.99
+        version: 1.0.99
       '@github/copilot-darwin-x64':
         specifier: 1.0.88
         version: 1.0.88
@@ -979,7 +979,7 @@ importers:
         version: 8.18.0
       acpx:
         specifier: 0.13.1
-        version: 0.13.1(patch_hash=btis2ixbxfyq422xwpnza3ncle)
+        version: 0.13.1(patch_hash=j4huaoi2baejrlq7vdcgzlx54m)
       ai:
         specifier: 7.0.130
         version: 7.0.130(zod@4.4.3)
@@ -1072,8 +1072,8 @@ importers:
         version: 4.4.3
     optionalDependencies:
       '@github/copilot-darwin-arm64':
-        specifier: 1.0.88
-        version: 1.0.88
+        specifier: 1.0.99
+        version: 1.0.99
       '@github/copilot-darwin-x64':
         specifier: 1.0.88
         version: 1.0.88
@@ -2602,8 +2602,8 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
-  '@github/copilot-darwin-arm64@1.0.88':
-    resolution: {integrity: sha512-gt52dl+ja+G88RjLuSec59fA8C9HNfdGxKwwqE7eAIJXZYSKwKvuMy4B79WlCtlpnH/QKbs5Z9VsU0BTxe3EAg==}
+  '@github/copilot-darwin-arm64@1.0.99':
+    resolution: {integrity: sha512-lRXtvrWVGWO511hyFvAHTO5gqoMi07I4UaEAoWZ1wMBX1c2l0/4R9sXXwJeMEG2cS4jyICGxXIRvRh3qZSLLnA==}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
@@ -5351,6 +5351,9 @@ packages:
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -10532,7 +10535,7 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@github/copilot-darwin-arm64@1.0.88':
+  '@github/copilot-darwin-arm64@1.0.99':
     optional: true
 
   '@github/copilot-darwin-x64@1.0.88':
@@ -13324,6 +13327,10 @@ snapshots:
     dependencies:
       '@types/node': 24.13.3
 
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.13.3
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -13513,7 +13520,7 @@ snapshots:
       - bare-buffer
       - react-native-b4a
 
-  acpx@0.13.1(patch_hash=btis2ixbxfyq422xwpnza3ncle):
+  acpx@0.13.1(patch_hash=j4huaoi2baejrlq7vdcgzlx54m):
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.4.3)
       commander: 15.0.0
