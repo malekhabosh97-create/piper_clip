@@ -43,7 +43,7 @@ patchedDependencies:
     hash: 6st5fzvttegjv64llnfegwwpca
     path: patches/acpx@0.12.0.patch
   acpx@0.13.1:
-    hash: btis2ixbxfyq422xwpnza3ncle
+    hash: j4huaoi2baejrlq7vdcgzlx54m
     path: patches/acpx@0.13.1.patch
   embedded-postgres@18.1.0-beta.16:
     hash: 55uhvnotpqyiy37rn3pqpukhei
@@ -347,15 +347,15 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       ws:
-        specifier: ^8.21.3
-        version: 8.21.3
+        specifier: ^8.22.0
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
       '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
+        specifier: ^8.18.2
+        version: 8.18.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -508,7 +508,7 @@ importers:
         version: 0.160.0
       acpx:
         specifier: 0.13.1
-        version: 0.13.1(patch_hash=btis2ixbxfyq422xwpnza3ncle)
+        version: 0.13.1(patch_hash=j4huaoi2baejrlq7vdcgzlx54m)
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -885,8 +885,8 @@ importers:
   server:
     dependencies:
       '@ai-sdk/openai':
-        specifier: 4.0.86
-        version: 4.0.86(zod@4.4.3)
+        specifier: 4.0.95
+        version: 4.0.95(zod@4.4.3)
       '@aws-sdk/client-s3':
         specifier: ^3.1141.0
         version: 3.1141.0
@@ -979,7 +979,7 @@ importers:
         version: 8.18.0
       acpx:
         specifier: 0.13.1
-        version: 0.13.1(patch_hash=btis2ixbxfyq422xwpnza3ncle)
+        version: 0.13.1(patch_hash=j4huaoi2baejrlq7vdcgzlx54m)
       ai:
         specifier: 7.0.130
         version: 7.0.130(zod@4.4.3)
@@ -1338,8 +1338,8 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@4.0.86':
-    resolution: {integrity: sha512-sbUHayMvjAYV6ELydYXFTr5UBX5qyYmRELqZR3tV0dieUhgUYd8dED9bwEgqZJNJU6V8GGLOlaEpL1ltbNXA/g==}
+  '@ai-sdk/openai@4.0.95':
+    resolution: {integrity: sha512-rx8agb3u+pvDDqvrDYrXfMJVlnlwigNcdgqbwH4oGVi/UZRMNVY+SYhGNI9ynwjmiGcl6QG/QJz73e6qaGL7jg==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -1350,8 +1350,18 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
+  '@ai-sdk/provider-utils@5.0.61':
+    resolution: {integrity: sha512-Y+Z3539UXw0ctFDNepTtG23VqBQHr2A6yI2qUxvQcg75DJYgJoD2F9U2Vp5OgQjX7lxto1BLgFtKuOhzrr52vQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/provider@4.0.24':
     resolution: {integrity: sha512-iztFqJTdxNN0ZzqZAAnVPMhRMaL1bfQFa3GIPAffWQ0+dP2FXIkyMD8kHeEI7EpB/C6TR45cqOkrS7YZZ1sATA==}
+    engines: {node: '>=22'}
+
+  '@ai-sdk/provider@4.0.28':
+    resolution: {integrity: sha512-6ThcmkJQXSMlBrf6mirIjUUS04Q5/kApbYTOzd5lZfYXLa1XPpnDLxP/G96/DKc00fDIUOW9S2ls0mSzb0+l9w==}
     engines: {node: '>=22'}
 
   '@antfu/install-pkg@1.1.0':
@@ -5352,6 +5362,9 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
     engines: {node: '>=16.20.0'}
@@ -8691,6 +8704,10 @@ packages:
     resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
     engines: {node: '>=20.18.1'}
 
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
+    engines: {node: '>=20.18.1'}
+
   undici@8.10.0:
     resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
     engines: {node: '>=22.19.0'}
@@ -9164,10 +9181,10 @@ snapshots:
       zod: 4.6.5
     optional: true
 
-  '@ai-sdk/openai@4.0.86(zod@4.4.3)':
+  '@ai-sdk/openai@4.0.95(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/provider': 4.0.24
-      '@ai-sdk/provider-utils': 5.0.56(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.28
+      '@ai-sdk/provider-utils': 5.0.61(zod@4.4.3)
       zod: 4.4.3
 
   '@ai-sdk/provider-utils@5.0.56(zod@4.4.3)':
@@ -9189,7 +9206,20 @@ snapshots:
       zod: 4.6.5
     optional: true
 
+  '@ai-sdk/provider-utils@5.0.61(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.28
+      '@standard-schema/spec': 1.1.0
+      '@workflow/serde': 4.1.0
+      eventsource-parser: 3.1.1
+      undici: 7.30.1
+      zod: 4.4.3
+
   '@ai-sdk/provider@4.0.24':
+    dependencies:
+      json-schema: 0.4.0
+
+  '@ai-sdk/provider@4.0.28':
     dependencies:
       json-schema: 0.4.0
 
@@ -13324,6 +13354,10 @@ snapshots:
     dependencies:
       '@types/node': 24.13.3
 
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.13.3
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -13513,7 +13547,7 @@ snapshots:
       - bare-buffer
       - react-native-b4a
 
-  acpx@0.13.1(patch_hash=btis2ixbxfyq422xwpnza3ncle):
+  acpx@0.13.1(patch_hash=j4huaoi2baejrlq7vdcgzlx54m):
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.4.3)
       commander: 15.0.0
@@ -17055,6 +17089,8 @@ snapshots:
   undici@6.28.1: {}
 
   undici@7.30.0: {}
+
+  undici@7.30.1: {}
 
   undici@8.10.0: {}
 
